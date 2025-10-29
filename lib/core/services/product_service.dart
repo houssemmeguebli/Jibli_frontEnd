@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class ProductService {
 
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'http://192.168.1.216:8080';
 
 
   Future<List<Map<String, dynamic>>> getAllProducts() async {
@@ -25,16 +25,35 @@ class ProductService {
       throw Exception('Failed to load product: ${response.statusCode}');
     }
   }
-  Future<Map<String, dynamic>?> getProductByUserId(int userId) async {
+  Future<List<Map<String, dynamic>>> getProductByUserId(int userId) async {
     final response = await http.get(Uri.parse('$baseUrl/products/user/$userId'));
+
     if (response.statusCode == 200) {
-      return Map<String, dynamic>.from(jsonDecode(response.body));
+      final List<dynamic> data = jsonDecode(response.body);
+
+      // Convert each product to Map<String, dynamic>
+      return data.map<Map<String, dynamic>>((product) {
+        final map = Map<String, dynamic>.from(product);
+
+        // Ensure attachments is always a List<Map<String, dynamic>>
+        if (map['attachments'] != null && map['attachments'] is List) {
+          map['attachments'] = (map['attachments'] as List)
+              .map<Map<String, dynamic>>(
+                  (att) => Map<String, dynamic>.from(att))
+              .toList();
+        } else {
+          map['attachments'] = <Map<String, dynamic>>[];
+        }
+
+        return map;
+      }).toList();
     } else if (response.statusCode == 404) {
-      return null;
+      return [];
     } else {
-      throw Exception('Failed to load product: ${response.statusCode}');
+      throw Exception('Failed to load products: ${response.statusCode}');
     }
   }
+
 
   Future<Map<String, dynamic>> createProduct(Map<String, dynamic> product) async {
     final response = await http.post(
@@ -104,6 +123,14 @@ class ProductService {
       throw Exception('Failed to load reviews: ${response.statusCode}');
     }
   }
+  Future<List<Map<String, dynamic>>> getProductByCompanyId(int companyId) async {
+    final response = await http.get(Uri.parse('$baseUrl/products/companyProducts/$companyId'));
+    if (response.statusCode == 200) {
+      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to load orders: ${response.statusCode}');
+    }
+  }
 
   Future<List<Map<String, dynamic>>> getProductOrderItems(int productId) async {
     final response = await http.get(Uri.parse('$baseUrl/products/$productId/order-items'));
@@ -113,4 +140,5 @@ class ProductService {
       throw Exception('Failed to load order items: ${response.statusCode}');
     }
   }
+
 }

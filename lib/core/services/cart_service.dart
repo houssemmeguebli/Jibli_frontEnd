@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class CartService {
 
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'http://192.168.1.216:8080';
 
   Future<List<Map<String, dynamic>>> getAllCarts() async {
     final response = await http.get(Uri.parse('$baseUrl/carts'));

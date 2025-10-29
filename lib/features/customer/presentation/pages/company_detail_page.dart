@@ -3,7 +3,7 @@ import '../../../../core/theme/theme.dart';
 import '../../../../core/services/company_service.dart';
 
 class CompanyDetailPage extends StatefulWidget {
-  final String companyId;
+  final int companyId;
 
   const CompanyDetailPage({
     super.key,
@@ -33,7 +33,7 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
       
       setState(() {
         _company = company;
-        _products = products;
+        _products = products as List<Map<String, dynamic>>;
         _isLoading = false;
       });
     } catch (e) {
@@ -146,7 +146,7 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _company!['name'] ?? 'Entreprise',
+            _company!['companyName'] ?? 'Entreprise',
             style: const TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -154,7 +154,7 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            _company!['category'] ?? 'Commerce',
+            _company!['companySector'] ?? 'Commerce',
             style: TextStyle(
               fontSize: 16,
               color: Colors.grey[600],
@@ -165,7 +165,7 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
             children: [
               _buildInfoChip(
                 Icons.star,
-                '${_company!['rating'] ?? 4.0}',
+                '${_company!['averageRating'] ?? 4.0}',
                 Colors.amber,
               ),
               const SizedBox(width: 12),
@@ -182,10 +182,10 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
               ),
             ],
           ),
-          if (_company!['description'] != null) ...[
+          if (_company!['companyDescription'] != null) ...[
             const SizedBox(height: 16),
             Text(
-              _company!['description'],
+              _company!['companyDescription'],
               style: TextStyle(
                 fontSize: 14,
                 color: Colors.grey[700],
@@ -297,16 +297,16 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    product['name'] ?? 'Produit',
+                    product['productName'] ?? 'Produit',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  if (product['description'] != null) ...[
+                  if (product['productDescription'] != null) ...[
                     const SizedBox(height: 4),
                     Text(
-                      product['description'],
+                      product['productDescription'],
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey[600],
@@ -320,7 +320,7 @@ class _CompanyDetailPageState extends State<CompanyDetailPage> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        '${product['price'] ?? 0} DH',
+                        '${product['productPrice'] ?? 0} DT',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,

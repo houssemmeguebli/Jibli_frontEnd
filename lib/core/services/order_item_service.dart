@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class OrderItemService {
 
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'http://192.168.1.216:8080';
 
   Future<List<Map<String, dynamic>>> getAllOrderItems() async {
     final response = await http.get(Uri.parse('$baseUrl/order-items'));

@@ -10,20 +10,16 @@ import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/category_service.dart';
 import '../../../../Core/services/product_service.dart';
 import '../../../../Core/services/attachment_service.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
-import 'dart:convert';
 
-class DetailsProductPage extends StatefulWidget {
-  final int productId;
 
-  const DetailsProductPage({super.key, required this.productId});
+class AddProductPage extends StatefulWidget {
+  const AddProductPage({super.key});
 
   @override
-  State<DetailsProductPage> createState() => _DetailsProductPageState();
+  State<AddProductPage> createState() => _AddProductPageState();
 }
 
-class _DetailsProductPageState extends State<DetailsProductPage> with SingleTickerProviderStateMixin {
+class _AddProductPageState extends State<AddProductPage> with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
@@ -34,7 +30,6 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
   List<Uint8List> _selectedImages = [];
   List<String> _selectedFileNames = [];
   List<String> _selectedContentTypes = [];
-  List<Map<String, dynamic>> _existingAttachments = [];
   final ImagePicker _picker = ImagePicker();
   double _finalPrice = 0.0;
   late AnimationController _animationController;
@@ -45,7 +40,6 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
   final AttachmentService _attachmentService = AttachmentService();
   List<dynamic> _categories = [];
   int? _selectedCategoryId;
-  bool _isLoading = true;
   bool _isLoadingCategories = true;
   String? _categoryError;
   bool _isSubmitting = false;
@@ -67,77 +61,6 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
 
     _animationController.forward();
     _loadCategories();
-    _loadProduct();
-  }
-
-  Future<void> _loadProduct() async {
-    try {
-      setState(() {
-        _isLoading = true;
-      });
-
-      final product = await _productService.getProductById(widget.productId);
-      if (product != null) {
-        _nameController.text = product['productName'] ?? '';
-        _descriptionController.text = product['productDescription'] ?? '';
-        _priceController.text = product['productPrice']?.toString() ?? '0';
-        _discountController.text = product['discountPercentage']?.toString() ?? '0';
-        _isAvailable = product['available'] ?? true;
-
-        final categoryId = product['categoryId'];
-        if (categoryId != null) {
-          _selectedCategoryId = categoryId;
-        }
-
-        _finalPrice = product['productFinalePrice']?.toDouble() ?? 0.0;
-
-        // Charger les pièces jointes existantes
-        try {
-          final attachments = await _attachmentService.getAttachmentsByEntity('Product', widget.productId);
-          final List<Uint8List> existingBytes = [];
-          final List<String> existingNames = [];
-          final List<String> existingTypes = [];
-
-          for (var attach in attachments) {
-            try {
-              final attachmentData = await _attachmentService.downloadAttachment(attach['attachmentId']);
-              existingBytes.add(attachmentData as Uint8List);
-              existingNames.add(attach['fileName'] ?? 'image.jpg');
-              existingTypes.add(attach['fileType'] ?? 'image/jpeg');
-            } catch (e) {
-              print('Erreur lors du téléchargement de la pièce jointe: $e');
-            }
-          }
-
-          setState(() {
-            _selectedImages = existingBytes;
-            _selectedFileNames = existingNames;
-            _selectedContentTypes = existingTypes;
-            _existingAttachments = attachments;
-          });
-        } catch (e) {
-          print('Erreur lors du chargement des pièces jointes: $e');
-        }
-      }
-
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erreur de chargement: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
-      }
-    }
   }
 
   Future<void> _loadCategories() async {
@@ -152,6 +75,10 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
       setState(() {
         _categories = categories as List;
         _isLoadingCategories = false;
+
+        if (_categories.isNotEmpty) {
+          _selectedCategoryId = _categories[0]['categoryId'];
+        }
       });
     } catch (e) {
       setState(() {
@@ -181,6 +108,10 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
   }
 
   Future<void> _pickImages() async {
+    _selectedImages.clear();
+    _selectedFileNames.clear();
+    _selectedContentTypes.clear();
+
     if (kIsWeb) {
       final html.FileUploadInputElement uploadInput = html.FileUploadInputElement();
       uploadInput.multiple = true;
@@ -198,13 +129,13 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
             reader.readAsArrayBuffer(file);
             await reader.onLoadEnd.first;
             bytesList.add(reader.result as Uint8List);
-            names.add(file.name);
-            types.add(file.type.isEmpty ? 'application/octet-stream' : file.type);
+            names.add(file.name.isEmpty ? 'image.jpg' : file.name);
+            types.add(file.type.isEmpty ? 'image/jpeg' : file.type);
           }
           setState(() {
-            _selectedImages.addAll(bytesList);
-            _selectedFileNames.addAll(names);
-            _selectedContentTypes.addAll(types);
+            _selectedImages = bytesList;
+            _selectedFileNames = names;
+            _selectedContentTypes = types;
           });
         }
       });
@@ -218,13 +149,13 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
         final List<String> types = [];
         for (var img in images) {
           bytesList.add(await img.readAsBytes());
-          names.add(img.name);
+          names.add(img.name.isEmpty ? 'image.jpg' : img.name);
           types.add(img.mimeType ?? 'image/jpeg');
         }
         setState(() {
-          _selectedImages.addAll(bytesList);
-          _selectedFileNames.addAll(names);
-          _selectedContentTypes.addAll(types);
+          _selectedImages = bytesList;
+          _selectedFileNames = names;
+          _selectedContentTypes = types;
         });
       }
     }
@@ -240,43 +171,34 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
 
   Future<void> _addAttachmentsToProduct(int productId) async {
     for (int i = 0; i < _selectedImages.length; i++) {
+      final bytes = _selectedImages[i];
+      final fileName = _selectedFileNames[i];
+      final contentType = _selectedContentTypes[i];
+
+      print('Uploading attachment $i: name=$fileName, type=$contentType, bytesLength=${bytes.length}, entity=Product:$productId');
+
       try {
         await _attachmentService.createAttachment(
-          fileBytes: _selectedImages[i],
-          fileName: _selectedFileNames[i],
-          contentType: _selectedContentTypes[i],
+          fileBytes: bytes,
+          fileName: fileName,
+          contentType: contentType,
           entityType: 'Product',
           entityId: productId,
         );
       } catch (e) {
-        print('Erreur lors de l\'ajout de la pièce jointe $i: $e');
+        print('Attachment upload failed: $e');
+        throw Exception('Échec upload image $i: $e');
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        backgroundColor: const Color(0xFFF8F9FA),
-        appBar: AppBar(
-          title: const Text('Détails du Produit'),
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.textLight,
-        ),
-        body: const Center(
-          child: CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation(AppColors.primary),
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8F9FA),
       appBar: AppBar(
         title: const Text(
-          'Détails du Produit',
+          'Ajouter un Produit',
           style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5),
         ),
         backgroundColor: AppColors.primary,
@@ -376,7 +298,7 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
       child: const Row(
         children: [
           Icon(
-            Icons.edit_document,
+            Icons.add_business,
             color: Colors.white,
             size: 32,
           ),
@@ -386,7 +308,7 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Modifier le Produit',
+                  'Nouveau Produit',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -395,7 +317,7 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Mettez à jour les informations du produit',
+                  'Remplissez tous les champs pour ajouter un produit',
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
@@ -833,7 +755,7 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
               ),
               const SizedBox(height: 8),
               Text(
-                '${_finalPrice.toStringAsFixed(2)} DT',
+                '${_finalPrice.toStringAsFixed(2)} €',
                 style: const TextStyle(
                   fontSize: 32,
                   fontWeight: FontWeight.bold,
@@ -1033,10 +955,10 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
                   : const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.update, color: AppColors.textLight, size: 22),
+                  Icon(Icons.save_outlined, color: AppColors.textLight, size: 22),
                   SizedBox(width: 8),
                   Text(
-                    'Mettre à jour',
+                    'Enregistrer',
                     style: TextStyle(
                       color: AppColors.textLight,
                       fontWeight: FontWeight.bold,
@@ -1055,11 +977,36 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
 
   Future<void> _submitProduct() async {
     if (_formKey.currentState!.validate()) {
+      if (_selectedImages.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Veuillez ajouter au moins une image'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+        return;
+      }
+
+      if (_selectedCategoryId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Veuillez sélectionner une catégorie'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+        return;
+      }
+
       setState(() {
         _isSubmitting = true;
       });
 
       try {
+        // Étape 1: Créer le produit
         final DateTime now = DateTime.now();
         final List<int> dateList = [now.year, now.month, now.day, now.hour, now.minute, now.second];
 
@@ -1073,44 +1020,37 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
           "userId": currentUserId,
           "createdAt": dateList,
           "lastUpdated": dateList,
+          "userId":currentUserId,
           "attachmentIds": [],
           "available": _isAvailable,
           "reviewIds": [],
           "orderItemIds": []
         };
 
-        await _productService.updateProduct(widget.productId, product);
+        final createdProduct = await _productService.createProduct(product);
+        final int productId = createdProduct['productId'] as int;
 
-        // Supprimer toutes les anciennes pièces jointes
-        for (var attach in _existingAttachments) {
-          try {
-            await _attachmentService.deleteAttachment(attach['attachmentId'] as int);
-          } catch (e) {
-            print('Erreur lors de la suppression de la pièce jointe: $e');
-          }
-        }
-
-        // Ajouter les nouvelles pièces jointes
+        // Étape 2: Ajouter les images indépendamment
         if (_selectedImages.isNotEmpty) {
-          await _addAttachmentsToProduct(widget.productId);
+          await _addAttachmentsToProduct(productId);
         }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Produit mis à jour avec succès!'),
+              content: const Text('Produit ajouté avec succès!'),
               backgroundColor: const Color(0xFF00B894),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
           );
-          Navigator.pop(context, true);
+          Navigator.pop(context);
         }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Erreur lors de la mise à jour: ${e.toString()}'),
+              content: Text('Erreur lors de l\'ajout: ${e.toString()}'),
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1140,8 +1080,8 @@ class _DetailsProductPageState extends State<DetailsProductPage> with SingleTick
           ],
         ),
         content: const Text(
-          'Modifiez les champs requis pour mettre à jour le produit.\n\n'
-              '• Ajoutez ou supprimez des images\n'
+          'Remplissez tous les champs requis pour ajouter un nouveau produit à votre catalogue.\n\n'
+              '• Ajoutez au moins une image\n'
               '• Le prix final est calculé automatiquement\n'
               '• Activez/désactivez la disponibilité',
           style: TextStyle(fontSize: 14, height: 1.5),

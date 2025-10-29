@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class OrderService {
 
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'http://192.168.1.216:8080';
 
   Future<List<Map<String, dynamic>>> getAllOrders() async {
     final response = await http.get(Uri.parse('$baseUrl/orders'));
@@ -50,8 +50,31 @@ class OrderService {
     
     return flattened;
   }
+  Future<void> patchOrderStatus(int id, String orderStatus) async {
+    try {
+      print('Patching Order $id with status: $orderStatus'); // Debug log
 
+      final response = await http.patch(
+        Uri.parse('http://192.168.1.216:8080/orders/orderStatus/$id'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'orderStatus': orderStatus,
+        }),
+      );
 
+      print('Response status: ${response.statusCode}'); // Debug log
+      print('Response body: ${response.body}'); // Debug log
+
+      if (response.statusCode != 200 && response.statusCode != 204) {
+        throw Exception('Failed to update order status: ${response.body}');
+      }
+    } catch (e) {
+      print('Error: $e'); // Debug log
+      rethrow;
+    }
+  }
 
   Future<List<Map<String, dynamic>>> getOrderById(int userId) async {
     final response = await http.get(Uri.parse('$baseUrl/orders/$userId'));
@@ -111,4 +134,35 @@ class OrderService {
       throw Exception('Failed to load order items: ${response.statusCode}');
     }
   }
+  Future<List<Map<String, dynamic>>> getOrdersByDeliveryId(int deliveryId) async {
+    final response = await http.get(Uri.parse('$baseUrl/orders/deliveryOrders/$deliveryId'));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is List) {
+        return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
+      } else {
+        return [_flattenOrder(decoded)];
+      }
+    } else {
+      throw Exception('Failed to load orders: ${response.statusCode}');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getOrdersByCompanyId(int companyId) async {
+    final response = await http.get(Uri.parse('$baseUrl/orders/companyOrders/$companyId'));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is List) {
+        return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
+      } else {
+        return [_flattenOrder(decoded)];
+      }
+    } else {
+      throw Exception('Failed to load orders: ${response.statusCode}');
+    }
+  }
+
+
+
+
 }

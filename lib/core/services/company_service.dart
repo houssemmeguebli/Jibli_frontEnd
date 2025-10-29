@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class CompanyService {
 
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'http://192.168.1.216:8080';
 
   Future<List<Map<String, dynamic>>> getAllCompanies() async {
     final response = await http.get(Uri.parse('$baseUrl/companies'));
@@ -19,7 +19,7 @@ class CompanyService {
     }
   }
 
-  Future<Map<String, dynamic>?> getCompanyById(String id) async {
+  Future<Map<String, dynamic>?> getCompanyById(int id) async {
     final response = await http.get(Uri.parse('$baseUrl/companies/$id'));
     if (response.statusCode == 200) {
       return Map<String, dynamic>.from(jsonDecode(response.body));
@@ -29,27 +29,93 @@ class CompanyService {
       throw Exception('Failed to load company: ${response.statusCode}');
     }
   }
-  Future<Map<String, dynamic>?> getCompanyByUserID(String userId) async {
+  Future<List<Map<String, dynamic>>> getCompanyByUserID(int userId) async {
     final response = await http.get(Uri.parse('$baseUrl/companies/user/$userId'));
     if (response.statusCode == 200) {
-      return Map<String, dynamic>.from(jsonDecode(response.body));
+      final decoded = jsonDecode(response.body);
+
+      // If response is a List, convert each item to Map
+      if (decoded is List) {
+        return decoded
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+      }
+      // If response is a Map, wrap it in a List
+      else if (decoded is Map<String, dynamic>) {
+        return [Map<String, dynamic>.from(decoded)];
+      }
+      return [];
     } else if (response.statusCode == 404) {
-      return null;
+      return [];
     } else {
       throw Exception('Failed to load company: ${response.statusCode}');
     }
   }
-  Future<List<Map<String, dynamic>>> getCompanyProducts(String companyId) async {
-    final response = await http.get(Uri.parse('$baseUrl/companies/$companyId/products'));
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        return List<Map<String, dynamic>>.from(decoded);
+
+  Future<Map<String, dynamic>?> getCompanyProducts(int companyId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/companies/$companyId/products'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw Exception('Request timeout'),
+      );
+
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      } else if (response.statusCode == 404) {
+        return null;
       } else {
-        return [Map<String, dynamic>.from(decoded)];
+        throw Exception('Failed to load company products: ${response.statusCode}');
       }
-    } else {
-      throw Exception('Failed to load company products: ${response.statusCode}');
+    } catch (e) {
+      throw Exception('Error fetching company products: $e');
+    }
+  }
+  // Get company with reviews
+  Future<Map<String, dynamic>> findByCompanyIdWithReviews(int companyId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/companies/$companyId/reviews'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      } else if (response.statusCode == 404) {
+        throw Exception('Company not found');
+      } else {
+        throw Exception('Failed to fetch company reviews: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Error fetching company reviews: $e');
+    }
+  }
+
+  // Get company with categories
+  Future<Map<String, dynamic>> findByCompanyIdWithCategories(int companyId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/companies/$companyId/categories'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      } else if (response.statusCode == 404) {
+        throw Exception('Company not found');
+      } else {
+        throw Exception('Failed to fetch company categories: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Error fetching company categories: $e');
     }
   }
 
@@ -105,4 +171,19 @@ class CompanyService {
       throw Exception('Failed to delete company: ${response.statusCode}');
     }
   }
+
+  Future<List<Map<String, dynamic>>> getOrdersByCompanyId(int companyId) async {
+    final response = await http.get(Uri.parse('$baseUrl/companies/$companyId/orders'));
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+      if (decoded is List) {
+        return List<Map<String, dynamic>>.from(decoded);
+      } else {
+        return [Map<String, dynamic>.from(decoded)];
+      }
+    } else {
+      throw Exception('Failed to load company orders: ${response.statusCode}');
+    }
+  }
+
 }

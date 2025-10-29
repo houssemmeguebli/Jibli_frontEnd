@@ -3,6 +3,7 @@ import 'package:frontend/core/services/cart_service.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/cart_item_service.dart';
 import '../../../../core/services/product_service.dart';
+import 'cutomer_order_page.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -13,7 +14,7 @@ class CartPage extends StatefulWidget {
 
 class _CartPageState extends State<CartPage> {
   final CartService _cartService = CartService();
-  final CartItemService _cartItemService = CartItemService('http://localhost:8080');
+  final CartItemService _cartItemService = CartItemService('http://192.168.1.216:8080');
   final ProductService _productService = ProductService();
   final int currentUserId = 1; // Static user ID for now
 
@@ -30,7 +31,6 @@ class _CartPageState extends State<CartPage> {
 
   Future<void> _loadCart() async {
     try {
-      // Get cart by user ID
       final cart = await _cartService.getCartByUserId(currentUserId);
 
       if (cart != null) {
@@ -43,7 +43,6 @@ class _CartPageState extends State<CartPage> {
           _isLoading = false;
         });
       } else {
-        // No cart found for this user, create one
         await _createCart();
       }
     } catch (e) {
@@ -101,7 +100,6 @@ class _CartPageState extends State<CartPage> {
           'cartId': _cart?['cartId'],
         });
 
-        // Reload cart to get updated total
         await _loadCart();
 
         if (mounted) {
@@ -127,8 +125,6 @@ class _CartPageState extends State<CartPage> {
   Future<void> _removeItem(int cartItemId) async {
     try {
       await _cartItemService.deleteCartItem(cartItemId);
-
-      // Reload cart to get updated items and total
       await _loadCart();
 
       if (mounted) {
@@ -150,6 +146,24 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
+  void _proceedToCheckout() {
+    if (_cartItems.isEmpty) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CustomerOrderPage(
+          cartItems: _cartItems,
+          totalAmount: _totalAmount,
+          userId: currentUserId,
+        ),
+      ),
+    ).then((_) {
+      // Reload cart after returning from order page
+      _loadCart();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -166,7 +180,8 @@ class _CartPageState extends State<CartPage> {
             child: ListView.separated(
               padding: const EdgeInsets.all(20),
               itemCount: _cartItems.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 16),
+              separatorBuilder: (context, index) =>
+              const SizedBox(height: 16),
               itemBuilder: (context, index) {
                 final item = _cartItems[index];
                 return _buildCartItem(item);
@@ -331,7 +346,7 @@ class _CartPageState extends State<CartPage> {
   Widget _buildCartItem(Map<String, dynamic> item) {
     final product = item['product'] as Map<String, dynamic>?;
     final productName = product?['productName'] ?? 'Produit';
-    final productPrice = (product?['productPrice'] ?? 0).toDouble();
+    final productPrice = (product?['productFinalePrice'] ?? 0).toDouble();
     final productImage = product?['imageUrl'];
     final quantity = item['quantity'] ?? 1;
     final itemTotal = productPrice * quantity;
@@ -352,7 +367,6 @@ class _CartPageState extends State<CartPage> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Product Image
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
             child: Container(
@@ -386,8 +400,6 @@ class _CartPageState extends State<CartPage> {
             ),
           ),
           const SizedBox(width: 16),
-
-          // Product Details
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,7 +433,6 @@ class _CartPageState extends State<CartPage> {
                 const SizedBox(height: 12),
                 Row(
                   children: [
-                    // Quantity Controls
                     Container(
                       decoration: BoxDecoration(
                         border: Border.all(color: Colors.grey[300]!),
@@ -477,7 +488,6 @@ class _CartPageState extends State<CartPage> {
                       ),
                     ),
                     const Spacer(),
-                    // Delete Button
                     InkWell(
                       onTap: () => _confirmRemoveItem(item['cartItemId'], productName),
                       borderRadius: BorderRadius.circular(10),
@@ -521,7 +531,6 @@ class _CartPageState extends State<CartPage> {
       child: SafeArea(
         child: Column(
           children: [
-            // Subtotal Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -543,7 +552,6 @@ class _CartPageState extends State<CartPage> {
               ],
             ),
             const SizedBox(height: 8),
-            // Delivery Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -555,7 +563,7 @@ class _CartPageState extends State<CartPage> {
                   ),
                 ),
                 Text(
-                  _totalAmount >= 50 ? 'Gratuite' : '7.00 DT',
+                  'Gratuite',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -567,7 +575,6 @@ class _CartPageState extends State<CartPage> {
             const SizedBox(height: 16),
             Divider(color: Colors.grey[300]),
             const SizedBox(height: 16),
-            // Total Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -589,7 +596,6 @@ class _CartPageState extends State<CartPage> {
               ],
             ),
             const SizedBox(height: 20),
-            // Checkout Button
             SizedBox(
               width: double.infinity,
               height: 56,
@@ -691,39 +697,6 @@ class _CartPageState extends State<CartPage> {
               ),
             ),
             child: const Text('Vider'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _proceedToCheckout() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Row(
-          children: [
-            Icon(Icons.info_outline, color: AppColors.primary),
-            const SizedBox(width: 8),
-            const Text('Information'),
-          ],
-        ),
-        content: const Text(
-          'La fonctionnalité de commande sera disponible prochainement.',
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: const Text('OK'),
           ),
         ],
       ),

@@ -11,7 +11,7 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final UserService _userService = UserService('http://localhost:8080');
+  final UserService _userService = UserService('http://192.168.1.216:8080');
   Map<String, dynamic>? _userData;
   bool _isLoading = true;
   final int _currentUserId = 1; // Mock user ID

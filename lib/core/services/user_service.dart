@@ -51,4 +51,14 @@ class UserService {
       throw Exception('Failed to delete user: ${response.statusCode}');
     }
   }
+
+  Future<List<Map<String, dynamic>>> getUsersByUserRole(String userRole) async {
+    final response = await http.get(Uri.parse('$baseUrl/users/userRole/$userRole'));
+    if (response.statusCode == 200) {
+      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to load users: ${response.statusCode}');
+    }
+  }
+
 }

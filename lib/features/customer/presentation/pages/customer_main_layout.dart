@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/theme.dart';
 import 'home_page.dart';
-import 'orders_page.dart';
+import 'customer_orders_page.dart';
 import 'favorites_page.dart';
 import 'profile_page.dart';
 

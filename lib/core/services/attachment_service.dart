@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/cupertino.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 class AttachmentService {
-  static const String baseUrl = 'http://localhost:8080';
+  static const String baseUrl = 'http://192.168.1.216:8080';
 
   // Helper to handle responses
   Future<Map<String, dynamic>> _handleResponse(http.Response response) async {
@@ -211,6 +212,31 @@ class AttachmentService {
       throw Exception('Error updating attachment: $e');
     }
   }
+  // Get attachments by product ID
+  Future<List<Map<String, dynamic>>> findByProductProductId(int productId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/attachments/product/$productId'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final jsonData = jsonDecode(response.body);
+        final List<dynamic> attachmentsList = jsonData is List ? jsonData : [];
+        return attachmentsList.cast<Map<String, dynamic>>();
+      } else if (response.statusCode == 404) {
+        debugPrint('No attachments found for product $productId');
+        return [];
+      } else {
+        throw Exception('Failed to fetch attachments: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('Error fetching attachments for product $productId: $e');
+      return [];
+    }
+  }
 
   // DELETE /attachments/{id} - Delete attachment
   Future<bool> deleteAttachment(int id) async {
@@ -310,4 +336,8 @@ class AttachmentDownload {
   bool get isImage => contentType.startsWith('image/');
   bool get isPdf => contentType == 'application/pdf';
   bool get isExcel => contentType.contains('excel') || contentType.contains('spreadsheet');
+
+
+
+
 }
