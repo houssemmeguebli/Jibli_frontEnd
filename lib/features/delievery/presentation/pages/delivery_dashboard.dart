@@ -287,7 +287,7 @@ class _DeliveryDashboardState extends State<DeliveryDashboard> {
             ),
           ),
           Text(
-            '${order['totalAmount'] ?? 0}€',
+            '${order['totalAmount'] ?? 0}DT',
             style: const TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 14,

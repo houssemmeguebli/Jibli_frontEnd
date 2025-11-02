@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/order_service.dart';
+import '../../../../core/services/pagination_service.dart';
 import 'delivery_order_details.dart';
 
 class DeliveryOrdersPage extends StatefulWidget {
@@ -12,12 +13,14 @@ class DeliveryOrdersPage extends StatefulWidget {
 
 class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
   final OrderService _orderService = OrderService();
+  final PaginationService _paginationService = PaginationService();
+  PaginationState _paginationState = PaginationState(currentPage: 1, totalItems: 0, itemsPerPage: 10);
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _filteredOrders = [];
   bool _isLoading = true;
   String _selectedFilter = 'WAITING';
   String _searchQuery = '';
-  static const int currentDeliveryId = 1;
+  static const int currentDeliveryId = 3;
 
   @override
   void initState() {
@@ -52,6 +55,7 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
             (order['customerName'] ?? '').toLowerCase().contains(_searchQuery.toLowerCase());
         return matchesFilter && matchesSearch;
       }).toList();
+      _paginationState = _paginationState.copyWith(currentPage: 1, totalItems: _filteredOrders.length);
     });
   }
 
@@ -90,14 +94,19 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
       barrierDismissible: false,
       builder: (BuildContext context) {
         return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Padding(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(24),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const CircularProgressIndicator(),
+                const SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: CircularProgressIndicator(strokeWidth: 3),
+                ),
                 const SizedBox(width: 20),
-                Text(message),
+                Text(message, style: const TextStyle(fontSize: 16)),
               ],
             ),
           ),
@@ -111,7 +120,8 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text(title),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
           content: Text(message),
           actions: [
             TextButton(
@@ -120,7 +130,10 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
               child: const Text('Confirmer', style: TextStyle(color: Colors.white)),
             ),
           ],
@@ -136,11 +149,13 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
           children: [
             const Icon(Icons.check_circle, color: Colors.white),
             const SizedBox(width: 12),
-            Text(message),
+            Expanded(child: Text(message)),
           ],
         ),
         backgroundColor: Colors.green,
         duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -157,6 +172,8 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
         ),
         backgroundColor: Colors.red,
         duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -164,6 +181,7 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       body: CustomScrollView(
         slivers: [
           SliverToBoxAdapter(child: _buildHeader()),
@@ -177,17 +195,86 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
                 ? SliverToBoxAdapter(child: _buildEmptyState())
                 : SliverList(
               delegate: SliverChildBuilderDelegate(
-                    (context, index) => _buildOrderCard(_filteredOrders[index]),
-                childCount: _filteredOrders.length,
+                    (context, index) {
+                      final paginatedOrders = _paginationService.getPageItems(_filteredOrders, _paginationState.currentPage);
+                      return _buildOrderCard(paginatedOrders[index]);
+                    },
+                childCount: _paginationService.getPageItems(_filteredOrders, _paginationState.currentPage).length,
               ),
             ),
           ),
+          if (_filteredOrders.isNotEmpty) SliverToBoxAdapter(child: _buildPaginationBar()),
+          const SliverToBoxAdapter(child: SizedBox(height: 20)),
         ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _loadOrders,
         backgroundColor: AppColors.primary,
-        child: const Icon(Icons.refresh),
+        child: const Icon(Icons.refresh_rounded),
+      ),
+    );
+  }
+
+  Widget _buildPaginationBar() {
+    final paginationService = PaginationService(itemsPerPage: 10);
+    final totalPages = paginationService.getTotalPages(_filteredOrders.length);
+    final startItem = (_paginationState.currentPage - 1) * _paginationState.itemsPerPage + 1;
+    final endItem = (_paginationState.currentPage * _paginationState.itemsPerPage).clamp(0, _filteredOrders.length);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.border.withOpacity(0.1),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            '$startItem à $endItem sur ${_filteredOrders.length}',
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          Row(
+            children: [
+              IconButton(
+                onPressed: _paginationState.currentPage > 1
+                    ? () => setState(() {
+                        _paginationState = _paginationState.copyWith(
+                          currentPage: _paginationState.currentPage - 1
+                        );
+                      })
+                    : null,
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Text(
+                'Page ${_paginationState.currentPage} sur $totalPages',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              IconButton(
+                onPressed: _paginationState.currentPage < totalPages
+                    ? () => setState(() {
+                        _paginationState = _paginationState.copyWith(
+                          currentPage: _paginationState.currentPage + 1
+                        );
+                      })
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -207,44 +294,57 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
           colors: [AppColors.primary, AppColors.primary.withOpacity(0.85)],
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(
-              Icons.local_shipping_rounded,
-              color: Colors.white,
-              size: 32,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Mes Livraisons',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                  ),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_filteredOrders.length} commande(s)',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w400,
-                  ),
+                child: const Icon(
+                  Icons.local_shipping_rounded,
+                  color: Colors.white,
+                  size: 32,
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Mes Livraisons',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_filteredOrders.length} commande${_filteredOrders.length > 1 ? 's' : ''}',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -253,59 +353,62 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
 
   Widget _buildStatsCards() {
     final waitingCount = _orders.where((o) => o['orderStatus'] == 'WAITING').length;
-    final acceptedCount = _orders.where((o) => o['orderStatus'] == 'ACCEPTED').length;
     final pickedUpCount = _orders.where((o) => o['orderStatus'] == 'PICKED_UP').length;
     final deliveredCount = _orders.where((o) => o['orderStatus'] == 'DELIVERED').length;
 
     return Container(
       padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _buildStatCard('En Attente', '$waitingCount', Icons.pending_actions, Colors.orange),
-            const SizedBox(width: 12),
-            _buildStatCard('Acceptées', '$acceptedCount', Icons.check, Colors.purple),
-            const SizedBox(width: 12),
-            _buildStatCard('À Livrer', '$pickedUpCount', Icons.local_shipping, Colors.blue),
-            const SizedBox(width: 12),
-            _buildStatCard('Livrées', '$deliveredCount', Icons.check_circle, Colors.green),
-          ],
-        ),
+      child: Row(
+        children: [
+          Expanded(child: _buildStatCard('En attente', waitingCount, Colors.orange, Icons.schedule_rounded)),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatCard('Récupérées', pickedUpCount, Colors.blue, Icons.local_shipping_rounded)),
+          const SizedBox(width: 12),
+          Expanded(child: _buildStatCard('Livrées', deliveredCount, Colors.green, Icons.check_circle_rounded)),
+        ],
       ),
     );
   }
 
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
+  Widget _buildStatCard(String title, int count, Color color, IconData icon) {
     return Container(
-      width: 120,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [color.withOpacity(0.1), color.withOpacity(0.05)],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.2)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.shadow.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(height: 12),
           Text(
-            value,
+            count.toString(),
             style: TextStyle(
-              fontSize: 20,
+              fontSize: 24,
               fontWeight: FontWeight.bold,
-              color: color,
+              color: AppColors.textPrimary,
             ),
           ),
+          const SizedBox(height: 4),
           Text(
             title,
             style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey[600],
+              fontSize: 12,
+              color: AppColors.textSecondary,
             ),
             textAlign: TextAlign.center,
           ),
@@ -325,14 +428,20 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
               _applyFilters();
             },
             decoration: InputDecoration(
-              hintText: 'Rechercher par numéro ou client...',
-              prefixIcon: const Icon(Icons.search),
+              hintText: 'Rechercher par ID de commande...',
+              prefixIcon: const Icon(Icons.search_rounded),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
+                borderSide: BorderSide(color: AppColors.border),
               ),
-              filled: true,
-              fillColor: Colors.white,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.border.withOpacity(0.3)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppColors.primary),
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -340,11 +449,15 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _buildFilterChip('ALL', 'Toutes'),
-                _buildFilterChip('WAITING', 'En Attente'),
-                _buildFilterChip('ACCEPTED', 'Acceptées'),
-                _buildFilterChip('PICKED_UP', 'À Livrer'),
-                _buildFilterChip('DELIVERED', 'Livrées'),
+                _buildFilterChip('Toutes', 'ALL'),
+                const SizedBox(width: 8),
+                _buildFilterChip('En attente', 'WAITING'),
+                const SizedBox(width: 8),
+                _buildFilterChip('Récupérées', 'PICKED_UP'),
+                const SizedBox(width: 8),
+                _buildFilterChip('Livrées', 'DELIVERED'),
+                const SizedBox(width: 8),
+                _buildFilterChip('Réfusé', 'REJECTED'),
               ],
             ),
           ),
@@ -353,307 +466,267 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
     );
   }
 
-  Widget _buildFilterChip(String value, String label) {
-    bool isSelected = _selectedFilter == value;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: FilterChip(
-        label: Text(label),
-        selected: isSelected,
-        onSelected: (selected) {
-          setState(() {
-            _selectedFilter = value;
-          });
-          _applyFilters();
-        },
-        backgroundColor: Colors.white,
-        selectedColor: AppColors.primary.withOpacity(0.2),
-        labelStyle: TextStyle(
-          color: isSelected ? AppColors.primary : Colors.grey[700],
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+  Widget _buildFilterChip(String label, String value) {
+    final isSelected = _selectedFilter == value;
+    return FilterChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: (selected) {
+        setState(() {
+          _selectedFilter = value;
+        });
+        _applyFilters();
+      },
+      backgroundColor: AppColors.surface,
+      selectedColor: AppColors.primary.withOpacity(0.2),
+      checkmarkColor: AppColors.primary,
+      labelStyle: TextStyle(
+        color: isSelected ? AppColors.primary : AppColors.textSecondary,
+        fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isSelected ? AppColors.primary : AppColors.border.withOpacity(0.3),
         ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.local_shipping_outlined,
+              size: 64,
+              color: AppColors.primary.withOpacity(0.7),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Aucune commande trouvée',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Aucune commande ne correspond à vos critères',
+            style: TextStyle(
+              fontSize: 14,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildOrderCard(Map<String, dynamic> order) {
-    Color statusColor = _getStatusColor(order['orderStatus']);
-
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DeliveryOrderDetailsPage(order: order),
+    final orderId = order['orderId']?.toString() ?? 'N/A';
+    final orderStatus = order['orderStatus']?.toString() ?? '';
+    final customerName = order['customerName']?.toString() ?? 'Client inconnu';
+    final total = (order['totalAmount'] ?? 0).toDouble();
+    
+    Color statusColor = _getStatusColor(orderStatus);
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.shadow.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
           ),
-        ).then((_) {
-          _loadOrders();
-        });
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 5),
-            ),
-          ],
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Commande #${order['orderId']}',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          order['customerName'] ?? 'Client',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _getStatusLabel(order['orderStatus']),
-                      style: TextStyle(
-                        color: statusColor,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
+                  color: statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Icon(
+                  Icons.receipt_long_rounded,
+                  color: statusColor,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.attach_money, color: Colors.grey[600], size: 16),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${order['totalAmount'] ?? 0} DT',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (order['orderStatus'] == 'PICKED_UP')
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text(
-                          'En route',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.blue,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                    Text(
+                      'Commande #$orderId',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
                       ),
+                    ),
+                    Text(
+                      customerName,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              _buildActionButtons(order),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: statusColor,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _getStatusLabel(orderStatus),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActionButtons(Map<String, dynamic> order) {
-    final status = order['orderStatus'];
-
-    return Row(
-      children: [
-        if (status == 'WAITING')
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: () => _updateOrderStatus(order['orderId'], 'ACCEPTED'),
-              icon: const Icon(Icons.check, size: 16),
-              label: const Text('Accepter'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          )
-        else if (status == 'ACCEPTED')
-          Expanded(
-            child: ElevatedButton.icon(
-              onPressed: () => _updateOrderStatus(order['orderId'], 'PICKED_UP'),
-              icon: const Icon(Icons.local_shipping, size: 16),
-              label: const Text('Commencer Livraison'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          )
-        else if (status == 'PICKED_UP')
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () => _updateOrderStatus(order['orderId'], 'DELIVERED'),
-                icon: const Icon(Icons.done_all, size: 16),
-                label: const Text('Marquer Livrée'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-            )
-          else if (status == 'DELIVERED')
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.green, size: 18),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Livrée',
-                        style: TextStyle(
-                          color: Colors.green,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-        if (status == 'WAITING') ...[
-          const SizedBox(width: 12),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () => _updateOrderStatus(order['orderId'], 'IN_PREPARATION'),
-              icon: const Icon(Icons.close, size: 16),
-              label: const Text('Refuser'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.red,
-                side: const BorderSide(color: Colors.red),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Container(
-      padding: const EdgeInsets.all(40),
-      child: Column(
-        children: [
-          Icon(
-            Icons.local_shipping_outlined,
-            size: 64,
-            color: Colors.grey[400],
-          ),
           const SizedBox(height: 16),
-          Text(
-            'Aucune commande trouvée',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Les nouvelles commandes apparaîtront ici',
-            style: TextStyle(
-              color: Colors.grey[500],
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${total.toStringAsFixed(2)} DT',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.primary,
+                ),
+              ),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => DeliveryOrderDetailsPage(order: order),
+                        ),
+                      );
+                    },
+                    child: const Text('Détails'),
+                  ),
+                  const SizedBox(width: 8),
+                  _buildStatusButton(order),
+                ],
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Color _getStatusColor(String? status) {
-    switch (status) {
+  Widget _buildStatusButton(Map<String, dynamic> order) {
+    final currentStatus = order['orderStatus']?.toString() ?? '';
+    final orderId = order['orderId'] as int;
+    
+    switch (currentStatus) {
+      case 'WAITING':
+        return Row(
+          children: [
+            ElevatedButton(
+              onPressed: () => _updateOrderStatus(orderId, 'REJECTED'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              child: const Text(
+                'Refuser',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: () => _updateOrderStatus(orderId, 'PICKED_UP'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              child: const Text(
+                'Accepter',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+          ],
+        );
+      case 'PICKED_UP':
+        return ElevatedButton(
+          onPressed: () => _updateOrderStatus(orderId, 'DELIVERED'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          ),
+          child: const Text(
+            'Livrer',
+            style: TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        );
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toUpperCase()) {
       case 'WAITING':
         return Colors.orange;
-      case 'ACCEPTED':
-        return Colors.purple;
+        case 'REJECTED':
+        return Colors.red;
       case 'PICKED_UP':
         return Colors.blue;
       case 'DELIVERED':
         return Colors.green;
-      case 'IN_PREPARATION':
-        return Colors.grey;
-      case 'CANCELLED':
-        return Colors.red;
       default:
-        return Colors.black38;
+        return AppColors.textSecondary;
     }
   }
 
-  String _getStatusLabel(String? status) {
-    switch (status) {
+  String _getStatusLabel(String status) {
+    switch (status.toUpperCase()) {
       case 'WAITING':
-        return 'En Attente';
-      case 'ACCEPTED':
-        return 'Acceptée';
+        return 'En attente';
+       case 'REJECTED':
+        return 'Refusée';
       case 'PICKED_UP':
-        return 'En Route';
+        return 'Récupérée';
       case 'DELIVERED':
         return 'Livrée';
-      case 'IN_PREPARATION':
-        return 'En Préparation';
-      case 'CANCELLED':
-        return 'Annulée';
       default:
-        return 'Inconnu';
+        return status;
     }
   }
 }

@@ -5,6 +5,7 @@ import '../../../../Core/services/order_item_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/product_service.dart';
 import '../../../../core/services/order_service.dart';
+import '../../../../core/services/company_service.dart';
 
 class DeliveryOrderDetailsPage extends StatefulWidget {
   final Map<String, dynamic> order;
@@ -20,16 +21,44 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
   final AttachmentService _attachmentService = AttachmentService();
   final ProductService _productService = ProductService();
   final OrderService _orderService = OrderService();
+  final CompanyService _companyService = CompanyService();
 
   List<Map<String, dynamic>> _orderItems = [];
   Map<int, List<Uint8List>> _productImages = {};
   Map<int, int> _selectedImageIndex = {};
+  Map<String, dynamic>? _companyInfo;
   bool _isLoading = true;
+  bool _isLoadingCompany = true;
 
   @override
   void initState() {
     super.initState();
     _loadOrderItems();
+    _loadCompanyInfo();
+  }
+
+  Future<void> _loadCompanyInfo() async {
+    try {
+      final companyId = widget.order['companyId'];
+      if (companyId != null) {
+        final company = await _companyService.getCompanyById(companyId);
+        if (mounted) {
+          setState(() {
+            _companyInfo = company;
+            _isLoadingCompany = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _isLoadingCompany = false);
+        }
+      }
+    } catch (e) {
+      print('Error loading company info: $e');
+      if (mounted) {
+        setState(() => _isLoadingCompany = false);
+      }
+    }
   }
 
   Future<void> _loadOrderItems() async {
@@ -209,6 +238,7 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     if (lowerStatus == 'accepted') return '#9C27B0';
     if (lowerStatus == 'picked_up') return '#3B82F6';
     if (lowerStatus == 'delivered') return '#10B981';
+    if (lowerStatus == 'rejected') return '#EF4444';
     if (lowerStatus == 'in_preparation') return '#6B7280';
     return '#6B7280';
   }
@@ -219,6 +249,7 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     if (lowerStatus == 'accepted') return 'Acceptée';
     if (lowerStatus == 'picked_up') return 'Récupérée';
     if (lowerStatus == 'delivered') return 'Livrée';
+    if (lowerStatus == 'rejected') return 'Refusée';
     if (lowerStatus == 'in_preparation') return 'En préparation';
     return status;
   }
@@ -244,6 +275,7 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
         child: Column(
           children: [
             _buildOrderHeader(),
+            if (!_isLoadingCompany) _buildCompanyInfo(),
             _buildCustomerInfo(),
             _buildDeliveryStatus(),
             _buildOrderItemsList(),
@@ -325,9 +357,109 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     );
   }
 
+  Widget _buildCompanyInfo() {
+    if (_companyInfo == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primary.withOpacity(0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Source de la Commande',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.business_outlined,
+                  color: AppColors.primary,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _companyInfo!['companyName'] ?? 'N/A',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            icon: Icons.phone_outlined,
+            label: 'Téléphone',
+            value: _companyInfo!['companyPhone'] ?? 'N/A',
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow(
+            icon: Icons.email_outlined,
+            label: 'Email',
+            value: _companyInfo!['companyEmail'] ?? 'N/A',
+          ),
+          const SizedBox(height: 12),
+          _buildInfoRow(
+            icon: Icons.location_on_outlined,
+            label: 'Adresse',
+            value: _companyInfo!['companyAddress'] ?? 'N/A',
+            isMultiLine: true,
+          ),
+          if (_companyInfo!['companyWebsite'] != null && (_companyInfo!['companyWebsite'] as String).isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.language_outlined,
+              label: 'Site Web',
+              value: _companyInfo!['companyWebsite'] ?? 'N/A',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildCustomerInfo() {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -437,7 +569,7 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     final status = widget.order['orderStatus'] ?? 'WAITING';
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -464,25 +596,25 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
           const SizedBox(height: 16),
           _buildDeliveryStep(
             status: 'Assignée',
-            date: _formatDate(widget.order['orderDate']),
+            date: _formatDate(widget.order['waitingDate']),
             isCompleted: ['ACCEPTED', 'PICKED_UP', 'DELIVERED'].contains(status),
             isActive: status == 'WAITING',
           ),
           _buildDeliveryStep(
             status: 'Acceptée',
-            date: status == 'ACCEPTED' ? 'Acceptée par vous' : 'À venir...',
+            date: _formatDate(widget.order['acceptedDate']),
             isCompleted: ['ACCEPTED', 'PICKED_UP', 'DELIVERED'].contains(status),
             isActive: status == 'ACCEPTED',
           ),
           _buildDeliveryStep(
             status: 'Récupérée',
-            date: status == 'PICKED_UP' ? 'Récupérée' : 'À venir...',
+            date: _formatDate(widget.order['pickedUpDate']),
             isCompleted: ['PICKED_UP', 'DELIVERED'].contains(status),
             isActive: status == 'PICKED_UP',
           ),
           _buildDeliveryStep(
             status: 'Livrée',
-            date: status == 'DELIVERED' ? _formatDate(DateTime.now()) : 'À venir...',
+            date: _formatDate(widget.order['deliveredDate']),
             isCompleted: status == 'DELIVERED',
             isActive: status == 'DELIVERED',
             isLast: true,
@@ -610,8 +742,6 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
 
     return GestureDetector(
       onTap: () {
-        // Navigate to product details
-        // You can add navigation here if needed
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Produit: $productName'),
@@ -799,7 +929,7 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     final total = (subtotal).toDouble();
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 20),
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -863,7 +993,23 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
       child: Row(
         children: [
-          if (status == 'WAITING')
+          if (status == 'WAITING') ...[
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _updateOrderStatus('REJECTED'),
+                icon: const Icon(Icons.cancel_outlined, size: 18),
+                label: const Text('Refuser'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: () => _updateOrderStatus('ACCEPTED'),
@@ -878,8 +1024,8 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
                   ),
                 ),
               ),
-            )
-          else if (status == 'ACCEPTED')
+            ),
+          ] else if (status == 'ACCEPTED')
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: () => _updateOrderStatus('PICKED_UP'),
@@ -935,7 +1081,32 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
                       ],
                     ),
                   ),
-                ),
+                )
+              else if (status == 'REJECTED')
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.cancel_outlined, color: Colors.red, size: 20),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Livraison Refusée',
+                            style: TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
         ],
       ),
     );
@@ -944,7 +1115,39 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
   String _formatDate(dynamic date) {
     if (date == null) return 'N/A';
     try {
-      final dateTime = DateTime.parse(date.toString());
+      DateTime dateTime;
+
+      if (date is String) {
+        final parts = date.replaceAll(' ', '').split(',');
+        if (parts.length >= 3) {
+          int year = int.parse(parts[0]);
+          int month = int.parse(parts[1]);
+          int day = int.parse(parts[2]);
+          int hour = parts.length > 3 ? int.parse(parts[3]) : 0;
+          int minute = parts.length > 4 ? int.parse(parts[4]) : 0;
+          int second = parts.length > 5 ? int.parse(parts[5]) : 0;
+
+          dateTime = DateTime(year, month, day, hour, minute, second);
+        } else {
+          return 'N/A';
+        }
+      } else if (date is List) {
+        if (date.isEmpty) return 'N/A';
+
+        int year = int.parse(date[0].toString());
+        int month = int.parse(date[1].toString());
+        int day = int.parse(date[2].toString());
+        int hour = date.length > 3 ? int.parse(date[3].toString()) : 0;
+        int minute = date.length > 4 ? int.parse(date[4].toString()) : 0;
+        int second = date.length > 5 ? int.parse(date[5].toString()) : 0;
+
+        dateTime = DateTime(year, month, day, hour, minute, second);
+      } else if (date is DateTime) {
+        dateTime = date;
+      } else {
+        return 'N/A';
+      }
+
       return '${dateTime.day}/${dateTime.month}/${dateTime.year} à ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
     } catch (e) {
       return 'N/A';

@@ -17,7 +17,7 @@ class JibliApp extends StatelessWidget {
     return MaterialApp(
       title: 'Jibli',
       theme: AppTheme.lightTheme,
-      home: const AdminMainLayout(),
+      home: const DeliveryMainLayout(),
       debugShowCheckedModeBanner: false,
     );
   }

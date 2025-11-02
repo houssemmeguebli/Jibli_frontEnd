@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:frontend/features/delievery/presentation/pages/delivery_statistics_page.dart';
 import '../../../../core/theme/theme.dart';
 import 'delivery_dashboard.dart';
 import 'delivery_orders_page.dart';
@@ -19,12 +20,17 @@ class _DeliveryMainLayoutState extends State<DeliveryMainLayout> {
     const DeliveryDashboard(),
     const DeliveryOrdersPage(),
     const DeliveryProfilePage(),
+    const DeliveryStatisticsPage()
   ];
 
   final List<({IconData icon, String label, String route})> _menuItems = [
     (icon: Icons.dashboard_rounded, label: 'Tableau de bord', route: 'dashboard'),
     (icon: Icons.local_shipping_rounded, label: 'Mes Livraisons', route: 'orders'),
+    (icon: Icons.analytics_rounded, label: 'Statistiques', route: 'statistics'),
     (icon: Icons.person_rounded, label: 'Profil', route: 'profile'),
+
+
+
   ];
 
   @override
@@ -472,7 +478,7 @@ class _DeliveryMainLayoutState extends State<DeliveryMainLayout> {
             ),
             child: const Icon(Icons.dashboard_rounded, size: 24),
           ),
-          label: 'Tableau',
+          label: 'Home',
         ),
         BottomNavigationBarItem(
           icon: Container(
@@ -484,6 +490,20 @@ class _DeliveryMainLayoutState extends State<DeliveryMainLayout> {
             child: const Icon(Icons.local_shipping_rounded, size: 24),
           ),
           label: 'Livraisons',
+        ),
+
+        BottomNavigationBarItem(
+          icon: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: _selectedIndex == 5
+                  ? AppColors.primary.withOpacity(0.15)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.analytics_rounded, size: 24),
+          ),
+          label: 'Stats',
         ),
         BottomNavigationBarItem(
           icon: Container(

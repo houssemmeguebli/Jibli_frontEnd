@@ -329,7 +329,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Bonjour ${_deliveryData!['firstName'] ?? 'Utilisateur'}',
+                  'Bonjour ${_deliveryData!['fullName'] ?? 'Utilisateur'}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 15,
@@ -500,8 +500,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
             _buildInfoRow(Icons.email, 'Email', _deliveryData!['email'] ?? 'N/A'),
             _buildInfoRow(Icons.phone, 'Téléphone', _deliveryData!['phone'] ?? 'N/A'),
             _buildInfoRow(Icons.location_on, 'Adresse', _deliveryData!['address'] ?? 'N/A'),
-            _buildInfoRow(Icons.calendar_today, 'Membre depuis', _deliveryData!['createdAt']?.toString().split('T')[0] ?? 'N/A'),
-          ],
+            _buildInfoRow(Icons.calendar_today, 'Membre depuis', _formatDate(_deliveryData!['createdAt']) ?? 'N/A'),          ],
         ],
       ),
     );
@@ -553,7 +552,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
                   const SizedBox(height: 4),
                   Text(
                     _isAvailable
-                        ? 'Vous recevrez de nouvelles commandes'
+                        ? 'Vous recevrez de commandes'
                         : 'Pas nouvelles commandes',
                     style: TextStyle(
                       color: Colors.grey[600],
@@ -772,4 +771,46 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
       ),
     );
   }
+  String _formatDate(dynamic date) {
+    if (date == null) return 'N/A';
+    try {
+      DateTime dateTime;
+
+      if (date is String) {
+        final parts = date.replaceAll(' ', '').split(',');
+        if (parts.length >= 3) {
+          int year = int.parse(parts[0]);
+          int month = int.parse(parts[1]);
+          int day = int.parse(parts[2]);
+          int hour = parts.length > 3 ? int.parse(parts[3]) : 0;
+          int minute = parts.length > 4 ? int.parse(parts[4]) : 0;
+          int second = parts.length > 5 ? int.parse(parts[5]) : 0;
+
+          dateTime = DateTime(year, month, day, hour, minute, second);
+        } else {
+          return 'N/A';
+        }
+      } else if (date is List) {
+        if (date.isEmpty) return 'N/A';
+
+        int year = int.parse(date[0].toString());
+        int month = int.parse(date[1].toString());
+        int day = int.parse(date[2].toString());
+        int hour = date.length > 3 ? int.parse(date[3].toString()) : 0;
+        int minute = date.length > 4 ? int.parse(date[4].toString()) : 0;
+        int second = date.length > 5 ? int.parse(date[5].toString()) : 0;
+
+        dateTime = DateTime(year, month, day, hour, minute, second);
+      } else if (date is DateTime) {
+        dateTime = date;
+      } else {
+        return 'N/A';
+      }
+
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year} à ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+    } catch (e) {
+      return 'N/A';
+    }
+  }
+
 }

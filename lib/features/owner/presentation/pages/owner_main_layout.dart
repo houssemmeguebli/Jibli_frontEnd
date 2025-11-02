@@ -6,6 +6,7 @@ import 'owner_edit_company_page.dart';
 import 'owner_products_page.dart';
 import 'owner_reviews_page.dart';
 import 'owner_orders_page.dart';
+import 'owner_statistics_page.dart';
 import 'dart:ui';
 
 class OwnerMainLayout extends StatefulWidget {
@@ -25,6 +26,7 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
     const OwnerProductsPage(),
     const CompanyPage(),
     const OwnerReviewsPage(),
+    const OwnerStatisticsPage(),
   ];
 
   final List<({IconData icon, String label, String route})> _menuItems = [
@@ -33,6 +35,7 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
     (icon: Icons.inventory_2_rounded, label: 'Mes Produits', route: 'products'),
     (icon: Icons.business_rounded, label: 'Entreprise', route: 'company'),
     (icon: Icons.star_rounded, label: 'Avis Clients', route: 'reviews'),
+    (icon: Icons.analytics_rounded, label: 'Statistiques', route: 'statistics'),
   ];
 
   @override
@@ -741,6 +744,20 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
               child: const Icon(Icons.star_rounded, size: 24),
             ),
             label: 'Avis',
+          ),
+          // Index 5 - Statistics
+          BottomNavigationBarItem(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: _selectedIndex == 5
+                    ? AppColors.primary.withOpacity(0.15)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.analytics_rounded, size: 24),
+            ),
+            label: 'Stats',
           ),
         ],
       ),

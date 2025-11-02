@@ -30,8 +30,6 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
   bool _isLoading = true;
 
   List<String> _statuses = ['Tous', 'PENDING', 'IN_PREPARATION', 'WAITING', 'ACCEPTED','PICKED_UP','DELIVERED', 'CANCELED'];
-
-
   List<String> _companies = ['Toutes'];
   Map<String, int> _companyMap = {};
   Map<int, String> _companyNameCache = {};
@@ -67,7 +65,6 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
           .where((c) => c['companyName'] != null)
           .map((c) => c['companyName'] as String)];
 
-      // Pre-cache company names
       for (var comp in companies) {
         _companyNameCache[comp['companyId']] = comp['companyName'] ?? 'Entreprise inconnue';
       }
@@ -167,7 +164,6 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         default:
           final dateA = a['orderDate']?.toString() ?? '';
           final dateB = b['orderDate']?.toString() ?? '';
-
           comparison = dateA.compareTo(dateB);
       }
       return _sortAscending ? comparison : -comparison;
@@ -194,6 +190,8 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
     if (_isLoading) {
       return Scaffold(
         backgroundColor: AppColors.background,
@@ -211,27 +209,44 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
+      body: isMobile ? _buildMobileLayout(paginatedOrders) : _buildWebLayout(paginatedOrders),
+    );
+  }
+
+  Widget _buildMobileLayout(List<Map<String, dynamic>> paginatedOrders) {
+    return SingleChildScrollView(
+      child: Column(
         children: [
-          _buildHeader(),
-          _buildFiltersSection(),
-          Expanded(
-            child: _buildOrdersContent(paginatedOrders),
-          ),
+          _buildHeader(isMobile: true),
+          _buildFiltersSection(isMobile: true),
+          _buildOrdersContent(paginatedOrders, isMobile: true),
           if (_filteredOrders.isNotEmpty) _buildPaginationBar(),
         ],
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildWebLayout(List<Map<String, dynamic>> paginatedOrders) {
+    return Column(
+      children: [
+        _buildHeader(isMobile: false),
+        _buildFiltersSection(isMobile: false),
+        Expanded(
+          child: _buildOrdersContent(paginatedOrders, isMobile: false),
+        ),
+        if (_filteredOrders.isNotEmpty) _buildPaginationBar(),
+      ],
+    );
+  }
+
+  Widget _buildHeader({required bool isMobile}) {
     final totalRevenue = _allOrders.fold<double>(
       0,
           (sum, order) => sum + ((order['totalAmount'] ?? 0).toDouble()),
     );
 
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(isMobile ? 16 : 24),
       decoration: BoxDecoration(
         color: AppColors.surface,
         boxShadow: [
@@ -243,7 +258,57 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
           ),
         ],
       ),
-      child: Row(
+      child: isMobile
+          ? Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: AppColors.primaryGradient,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.receipt_long_rounded,
+                  color: AppColors.textLight,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Gestion des\nCommandes',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      '${_filteredOrders.length} commandes',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: _buildStatsRow(totalRevenue, isMobile: true),
+          ),
+        ],
+      )
+          : Row(
         children: [
           Container(
             padding: const EdgeInsets.all(14),
@@ -280,29 +345,28 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
               ],
             ),
           ),
-          _buildStatsRow(totalRevenue),
+          _buildStatsRow(totalRevenue, isMobile: false),
         ],
       ),
     );
   }
 
-  Widget _buildStatsRow(double totalRevenue) {
-    return Row(
+  Widget _buildStatsRow(double totalRevenue, {required bool isMobile}) {
+    return Wrap(
+      spacing: isMobile ? 8 : 12,
       children: [
-        _buildStatCard('Totales', _allOrders.length.toString(), Icons.shopping_bag_rounded),
-        const SizedBox(width: 12),
-        _buildStatCard('Revenu', '${totalRevenue.toStringAsFixed(0)}DT', Icons.trending_up_rounded),
-        const SizedBox(width: 12),
+        _buildStatCard('Totales', _allOrders.length.toString(), Icons.shopping_bag_rounded, isMobile),
+        _buildStatCard('Revenu', '${totalRevenue.toStringAsFixed(0)}DT', Icons.trending_up_rounded, isMobile),
         _buildStatCard('Livrées',
             _allOrders.where((o) => o['orderStatus'] == 'DELIVERED').length.toString(),
-            Icons.check_circle_rounded),
+            Icons.check_circle_rounded, isMobile),
       ],
     );
   }
 
-  Widget _buildStatCard(String label, String value, IconData icon) {
+  Widget _buildStatCard(String label, String value, IconData icon, bool isMobile) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 14, vertical: isMobile ? 8 : 10),
       decoration: BoxDecoration(
         color: AppColors.background,
         borderRadius: BorderRadius.circular(12),
@@ -312,22 +376,23 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 16, color: AppColors.primary),
+              Icon(icon, size: isMobile ? 14 : 16, color: AppColors.primary),
               const SizedBox(width: 6),
-              Text(label, style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              Text(label, style: TextStyle(fontSize: isMobile ? 9 : 10, color: AppColors.textSecondary)),
             ],
           ),
           const SizedBox(height: 2),
-          Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+          Text(value, style: TextStyle(fontSize: isMobile ? 12 : 13, fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  Widget _buildFiltersSection() {
+  Widget _buildFiltersSection({required bool isMobile}) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.all(isMobile ? 12 : 24),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(
@@ -338,115 +403,219 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         ),
       ),
       child: SingleChildScrollView(
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    onChanged: (value) async {
-                      _searchQuery = value;
-                      await _applyFilters();
-                    },
-                    decoration: InputDecoration(
-                      hintText: 'Rechercher par ID ou date...',
-                      prefixIcon: const Icon(Icons.search_rounded, size: 22),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.border),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.border.withOpacity(0.3)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: AppColors.primary, width: 2),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildFilterDropdown('Statut', _selectedStatus, _statuses, (value) async {
-                    _selectedStatus = value!;
-                    await _applyFilters();
-                  }),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _buildFilterDropdown('Entreprise', _selectedCompany, _companies, (value) async {
-                    _selectedCompany = value!;
-                    await _applyFilters();
-                  }),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Montant: ${_minTotal.toInt()}DT - ${_maxTotal.toInt()}DT',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: AppColors.textSecondary,
-                        ),
-                      ),
-                      RangeSlider(
-                        values: RangeValues(_minTotal, _maxTotal),
-                        min: 0,
-                        max: 1000,
-                        divisions: 100,
-                        activeColor: AppColors.primary,
-                        inactiveColor: AppColors.border.withOpacity(0.3),
-                        onChanged: (values) {
-                          setState(() {
-                            _minTotal = values.start;
-                            _maxTotal = values.end;
-                          });
-                        },
-                        onChangeEnd: (values) async => await _applyFilters(),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 24),
-                _buildSortSection(),
-              ],
-            ),
-          ],
-        ),
+        child: isMobile ? _buildMobileFilters() : _buildDesktopFilters(),
       ),
     );
   }
 
-  Widget _buildFilterDropdown(
-      String label,
-      String value,
-      List<String> items,
-      Function(String?) onChanged,
-      ) {
+  Widget _buildMobileFilters() {
+    final isMobile = MediaQuery.of(context).size.width < 768;
+
+    return Column(
+      spacing: 12,
+      children: [
+        TextField(
+          onChanged: (value) async {
+            _searchQuery = value;
+            await _applyFilters();
+          },
+          decoration: InputDecoration(
+            hintText: 'Rechercher...',
+            isDense: true,
+            prefixIcon: const Icon(Icons.search_rounded, size: 20),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: AppColors.border),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: AppColors.border.withOpacity(0.3)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(color: AppColors.primary, width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          ),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _buildFilterDropdown('Statut', _selectedStatus, _statuses, (value) async {
+                _selectedStatus = value!;
+                await _applyFilters();
+              }, isMobile),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _buildFilterDropdown('Entreprise', _selectedCompany, _companies, (value) async {
+                _selectedCompany = value!;
+                await _applyFilters();
+              }, isMobile),
+            ),
+          ],
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Montant: ${_minTotal.toInt()}DT - ${_maxTotal.toInt()}DT',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
+            ),
+            RangeSlider(
+              values: RangeValues(_minTotal, _maxTotal),
+              min: 0,
+              max: 1000,
+              divisions: 100,
+              activeColor: AppColors.primary,
+              inactiveColor: AppColors.border.withOpacity(0.3),
+              onChanged: (values) {
+                setState(() {
+                  _minTotal = values.start;
+                  _maxTotal = values.end;
+                });
+              },
+              onChangeEnd: (values) async => await _applyFilters(),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: DropdownButton<String>(
+                value: _sortBy,
+                isExpanded: true,
+                items: _sortOptions.map((option) {
+                  return DropdownMenuItem(
+                    value: option,
+                    child: Text(_getSortLabel(option), style: const TextStyle(fontSize: 12)),
+                  );
+                }).toList(),
+                onChanged: (value) async {
+                  _sortBy = value!;
+                  await _applyFilters();
+                },
+              ),
+            ),
+            IconButton(
+              onPressed: () async {
+                _sortAscending = !_sortAscending;
+                await _applyFilters();
+              },
+              icon: Icon(
+                _sortAscending ? Icons.arrow_upward : Icons.arrow_downward,
+                color: AppColors.primary,
+                size: 20,
+              ),
+              constraints: const BoxConstraints(maxHeight: 35),
+              padding: EdgeInsets.zero,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDesktopFilters() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: TextField(
+                onChanged: (value) async {
+                  _searchQuery = value;
+                  await _applyFilters();
+                },
+                decoration: InputDecoration(
+                  hintText: 'Rechercher par ID ou date...',
+                  prefixIcon: const Icon(Icons.search_rounded, size: 22),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.border.withOpacity(0.3)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: AppColors.primary, width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildFilterDropdown('Statut', _selectedStatus, _statuses, (value) async {
+                _selectedStatus = value!;
+                await _applyFilters();
+              }, false),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildFilterDropdown('Entreprise', _selectedCompany, _companies, (value) async {
+                _selectedCompany = value!;
+                await _applyFilters();
+              }, false),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Montant: ${_minTotal.toInt()}DT - ${_maxTotal.toInt()}DT',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
+                  ),
+                  RangeSlider(
+                    values: RangeValues(_minTotal, _maxTotal),
+                    min: 0,
+                    max: 1000,
+                    divisions: 100,
+                    activeColor: AppColors.primary,
+                    inactiveColor: AppColors.border.withOpacity(0.3),
+                    onChanged: (values) {
+                      setState(() {
+                        _minTotal = values.start;
+                        _maxTotal = values.end;
+                      });
+                    },
+                    onChangeEnd: (values) async => await _applyFilters(),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 24),
+            _buildSortSection(),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFilterDropdown(String label, String value, List<String> items, Function(String?) onChanged, bool isMobile) {
     return DropdownButtonFormField<String>(
       value: value,
       decoration: InputDecoration(
         labelText: label,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        isDense: isMobile,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(isMobile ? 10 : 12)),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(isMobile ? 10 : 12),
           borderSide: BorderSide(color: AppColors.border.withOpacity(0.3)),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(isMobile ? 10 : 12),
           borderSide: BorderSide(color: AppColors.primary, width: 2),
         ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        contentPadding: EdgeInsets.symmetric(horizontal: isMobile ? 10 : 12, vertical: isMobile ? 8 : 12),
       ),
       items: items.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
       onChanged: onChanged,
@@ -496,7 +665,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
   }
 
-  Widget _buildOrdersContent(List<Map<String, dynamic>> orders) {
+  Widget _buildOrdersContent(List<Map<String, dynamic>> orders, {required bool isMobile}) {
     if (orders.isEmpty) {
       return Center(
         child: Column(
@@ -537,12 +706,19 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: _buildOrdersList(orders),
+      padding: EdgeInsets.all(isMobile ? 12 : 24),
+      child: isMobile ? _buildMobileOrdersList(orders) : _buildWebOrdersList(orders),
     );
   }
 
-  Widget _buildOrdersList(List<Map<String, dynamic>> orders) {
+  Widget _buildMobileOrdersList(List<Map<String, dynamic>> orders) {
+    return Column(
+      spacing: 12,
+      children: orders.map((order) => _buildOrderCard(order, isMobile: true)).toList(),
+    );
+  }
+
+  Widget _buildWebOrdersList(List<Map<String, dynamic>> orders) {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth > 1200) {
@@ -550,7 +726,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         } else if (constraints.maxWidth > 900) {
           return _buildOrdersGrid(orders, 2);
         } else {
-          return _buildOrdersColumn(orders);
+          return _buildOrdersGrid(orders, 1);
         }
       },
     );
@@ -567,22 +743,11 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         mainAxisSpacing: 20,
       ),
       itemCount: orders.length,
-      itemBuilder: (context, index) => _buildOrderCard(orders[index]),
+      itemBuilder: (context, index) => _buildOrderCard(orders[index], isMobile: false),
     );
   }
 
-  Widget _buildOrdersColumn(List<Map<String, dynamic>> orders) {
-    return Column(
-      children: orders.asMap().entries.map((entry) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 16),
-          child: _buildOrderCard(entry.value),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildOrderCard(Map<String, dynamic> order) {
+  Widget _buildOrderCard(Map<String, dynamic> order, {required bool isMobile}) {
     final orderId = order['orderId']?.toString() ?? 'N/A';
     final orderDate = _formatDate(order['orderDate']);
     final orderStatus = order['orderStatus']?.toString() ?? '';
@@ -613,7 +778,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.all(20),
+              padding: EdgeInsets.all(isMobile ? 14 : 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -630,18 +795,18 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                         child: Icon(
                           Icons.receipt_long_rounded,
                           color: statusColor,
-                          size: 20,
+                          size: isMobile ? 18 : 20,
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               'Commande #$orderId',
-                              style: const TextStyle(
-                                fontSize: 16,
+                              style: TextStyle(
+                                fontSize: isMobile ? 14 : 16,
                                 fontWeight: FontWeight.w700,
                                 color: AppColors.textPrimary,
                               ),
@@ -649,7 +814,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                             Text(
                               orderDate,
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: isMobile ? 10 : 11,
                                 color: AppColors.textSecondary,
                               ),
                             ),
@@ -658,24 +823,27 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  _buildStatusBadge(orderStatus, statusColor),
-                  const SizedBox(height: 14),
-                  _buildOrderCardInfo(companyId, userId),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
+                  _buildStatusBadge(orderStatus, statusColor, isMobile),
+                  const SizedBox(height: 12),
+                  _buildOrderCardInfo(companyId, userId, isMobile),
+                  const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
                         'Total',
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: isMobile ? 11 : 12,
                           fontWeight: FontWeight.w500,
                           color: AppColors.textSecondary,
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: isMobile ? 10 : 12,
+                          vertical: isMobile ? 5 : 6,
+                        ),
                         decoration: BoxDecoration(
                           gradient: AppColors.primaryGradient,
                           borderRadius: BorderRadius.circular(8),
@@ -689,8 +857,8 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                         ),
                         child: Text(
                           '${total.toStringAsFixed(2)} DT',
-                          style: const TextStyle(
-                            fontSize: 14,
+                          style: TextStyle(
+                            fontSize: isMobile ? 12 : 14,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,
                           ),
@@ -702,8 +870,8 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
               ),
             ),
             Positioned(
-              top: 12,
-              right: 12,
+              top: 10,
+              right: 10,
               child: PopupMenuButton(
                 itemBuilder: (context) => [
                   PopupMenuItem(
@@ -727,7 +895,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     );
   }
 
-  Widget _buildOrderCardInfo(int? companyId, int? userId) {
+  Widget _buildOrderCardInfo(int? companyId, int? userId, bool isMobile) {
     return FutureBuilder<List<String>>(
       future: Future.wait([
         companyId != null ? _getCompanyName(companyId) : Future.value('Entreprise inconnue'),
@@ -743,7 +911,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         }
 
         return Container(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.all(isMobile ? 10 : 12),
           decoration: BoxDecoration(
             color: AppColors.background,
             borderRadius: BorderRadius.circular(12),
@@ -756,13 +924,13 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.business, size: 16, color: AppColors.primary),
+                  Icon(Icons.business, size: isMobile ? 14 : 16, color: AppColors.primary),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       companyName,
-                      style: const TextStyle(
-                        fontSize: 13,
+                      style: TextStyle(
+                        fontSize: isMobile ? 12 : 13,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
                       ),
@@ -775,13 +943,13 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Icon(Icons.person, size: 16, color: AppColors.success),
+                  Icon(Icons.person, size: isMobile ? 14 : 16, color: AppColors.success),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       userName,
-                      style: const TextStyle(
-                        fontSize: 13,
+                      style: TextStyle(
+                        fontSize: isMobile ? 12 : 13,
                         fontWeight: FontWeight.w500,
                         color: AppColors.textPrimary,
                       ),
@@ -798,9 +966,9 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     );
   }
 
-  Widget _buildStatusBadge(String status, Color statusColor) {
+  Widget _buildStatusBadge(String status, Color statusColor, bool isMobile) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: EdgeInsets.symmetric(horizontal: isMobile ? 8 : 10, vertical: isMobile ? 4 : 6),
       decoration: BoxDecoration(
         color: statusColor.withOpacity(0.15),
         borderRadius: BorderRadius.circular(20),
@@ -810,15 +978,15 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 5,
+            height: 5,
             decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
           Text(
             status,
             style: TextStyle(
-              fontSize: 11,
+              fontSize: isMobile ? 10 : 11,
               fontWeight: FontWeight.w600,
               color: statusColor,
             ),
@@ -849,8 +1017,9 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
   }
 
-
   Widget _buildPaginationBar() {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 768;
     final paginationService = PaginationService(itemsPerPage: 12);
     final totalPages = paginationService.getTotalPages(_filteredOrders.length);
     final startItem = (_paginationState.currentPage - 1) * _paginationState.itemsPerPage + 1;
@@ -858,14 +1027,58 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         .clamp(0, _filteredOrders.length);
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         border: Border(
           top: BorderSide(color: AppColors.border.withOpacity(0.1), width: 1),
         ),
       ),
-      child: Row(
+      child: isMobile
+          ? Column(
+        spacing: 12,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Affichage de $startItem à $endItem sur ${_filteredOrders.length}',
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              IconButton(
+                onPressed: _paginationState.currentPage > 1
+                    ? () => setState(() {
+                  _paginationState = _paginationState.copyWith(
+                    currentPage: _paginationState.currentPage - 1,
+                  );
+                })
+                    : null,
+                icon: const Icon(Icons.chevron_left, size: 20),
+              ),
+              Text(
+                '${_paginationState.currentPage}/$totalPages',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              IconButton(
+                onPressed: _paginationState.currentPage < totalPages
+                    ? () => setState(() {
+                  _paginationState = _paginationState.copyWith(
+                    currentPage: _paginationState.currentPage + 1,
+                  );
+                })
+                    : null,
+                icon: const Icon(Icons.chevron_right, size: 20),
+              ),
+            ],
+          ),
+        ],
+      )
+          : Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
@@ -908,16 +1121,13 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
       ),
     );
   }
+
   String _formatDate(dynamic date) {
     if (date == null) return 'N/A';
     try {
       DateTime dateTime;
 
-      print('Date type: ${date.runtimeType}, Date value: $date');
-
-      // Handle string format with commas: "2025, 10, 14, 4, 43, 59"
       if (date is String) {
-        // Remove spaces and split by comma
         final parts = date.replaceAll(' ', '').split(',');
         if (parts.length >= 3) {
           int year = int.parse(parts[0]);
@@ -931,9 +1141,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         } else {
           return 'N/A';
         }
-      }
-      // Handle list format from LocalDateTime [year, month, day, hour, minute, second]
-      else if (date is List) {
+      } else if (date is List) {
         if (date.isEmpty) return 'N/A';
 
         int year = int.parse(date[0].toString());
@@ -944,20 +1152,15 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         int second = date.length > 5 ? int.parse(date[5].toString()) : 0;
 
         dateTime = DateTime(year, month, day, hour, minute, second);
-      }
-      // Handle DateTime object
-      else if (date is DateTime) {
+      } else if (date is DateTime) {
         dateTime = date;
       } else {
-        print('Unknown date format: ${date.runtimeType}');
         return 'N/A';
       }
 
       return '${dateTime.day}/${dateTime.month}/${dateTime.year} à ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
     } catch (e) {
-      print('Error parsing date: $date, Error: $e');
       return 'N/A';
     }
   }
-
 }
