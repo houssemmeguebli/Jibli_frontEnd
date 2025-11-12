@@ -9,6 +9,8 @@ import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/category_service.dart';
 import '../../../../Core/services/product_service.dart';
 import '../../../../Core/services/attachment_service.dart';
+import '../../../../core/services/company_service.dart';
+import '../../../../core/services/auth_service.dart';
 
 class DetailsProductPage {
   static Future<bool?> showProductDetailsDialog(
@@ -56,12 +58,15 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
   double _finalPrice = 0.0;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
-  final currentUserId = 2;
+  int? _currentUserId;
+  final AuthService _authService = AuthService();
   final CategoryService _categoryService = CategoryService();
   final ProductService _productService = ProductService();
   final AttachmentService _attachmentService = AttachmentService();
+  final CompanyService _companyService = CompanyService();
   List<dynamic> _categories = [];
   int? _selectedCategoryId;
+  String? _companyName;
   bool _isLoading = true;
   bool _isLoadingCategories = true;
   bool _isLoadingImages = true;
@@ -84,15 +89,68 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
     );
 
     _animationController.forward();
+    _loadCurrentUserId();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
     _loadCategories();
     _loadProduct();
   }
+  Future<void> _loadProductImages() async {
+    try {
+      setState(() => _isLoadingImages = true);
 
+      final List<Uint8List> images = [];
+
+      if (_existingAttachments.isNotEmpty) {
+        // Get all attachment IDs for batch processing
+        final List<int> attachmentIds = _existingAttachments
+            .map((a) => int.tryParse(a['attachmentId'].toString()))
+            .where((id) => id != null)
+            .cast<int>()
+            .toList();
+
+        if (attachmentIds.isNotEmpty) {
+          // Fetch all attachments in parallel
+          final attachmentFutures = attachmentIds.map((id) => _attachmentService.downloadAttachment(id));
+          final attachmentResults = await Future.wait(attachmentFutures);
+
+          for (var result in attachmentResults) {
+            if (result.data.isNotEmpty) {
+              images.add(result.data);
+            }
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _existingImages = images;
+          _isLoadingImages = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Error loading product images: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingImages = false;
+        });
+      }
+    }
+  }
   Future<void> _loadProduct() async {
     try {
       setState(() => _isLoading = true);
 
-      final productsData = await _productService.getProductByUserId(currentUserId);
+      if (_currentUserId == null) {
+        _showErrorAndExit('User not authenticated');
+        return;
+      }
+      final productsData = await _productService.getProductByUserId(_currentUserId!);
 
       if (productsData is! List || productsData!.isEmpty) {
         _showErrorAndExit('Produit non trouvé');
@@ -104,6 +162,7 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
             (p) => p['productId'] == widget.productId,
         orElse: () => <String, dynamic>{},
       );
+
       if (product.isEmpty) {
         _showErrorAndExit('Produit non trouvé');
         return;
@@ -117,25 +176,60 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
       _selectedCategoryId = product['categoryId'];
       _finalPrice = product['productFinalePrice']?.toDouble() ?? 0.0;
 
-      final attachments = product['attachments'] as List<dynamic>? ?? [];
-      _existingAttachments = attachments.cast<Map<String, dynamic>>();
-      _originalAttachmentIds = _existingAttachments.map((a) => a['attachmentId'] as int).toList();
-
-      final List<Uint8List> existingBytes = [];
-      for (var attach in _existingAttachments) {
+      // Load company name
+      final companyId = product['companyId'];
+      if (companyId != null) {
         try {
-          final attachmentDownload = await _attachmentService.downloadAttachment(attach['attachmentId']);
-          existingBytes.add(attachmentDownload.data);
+          final companyData = await _companyService.getCompanyByUserID(_currentUserId!);
+          if (companyData != null) {
+            if (companyData is List) {
+              final company = (companyData as List).cast<Map<String, dynamic>>().firstWhere(
+                    (c) => c['companyId'] == companyId,
+                orElse: () => <String, dynamic>{},
+              );
+              if (company.isNotEmpty) {
+                _companyName = company['companyName'] as String?;
+              }
+            } else if (companyData is Map<String, dynamic>) {
+              final dataMap = Map<String, dynamic>.from(companyData as Map);
+              if (dataMap['companyId'] == companyId) {
+                _companyName = dataMap['companyName'] as String?;
+              }
+            }
+          }
         } catch (e) {
-          existingBytes.add(Uint8List(0));
+          debugPrint('Error loading company: $e');
         }
       }
 
-      setState(() {
-        _existingImages = existingBytes;
-        _isLoadingImages = false;
-        _isLoading = false;
-      });
+      // Load attachments directly from attachment service
+      try {
+        final attachments = await _attachmentService.findByProductProductId(widget.productId);
+        _existingAttachments = attachments.cast<Map<String, dynamic>>();
+        _originalAttachmentIds = _existingAttachments.map((a) => int.parse(a['attachmentId'].toString())).toList();
+      } catch (e) {
+        debugPrint('Error loading attachments: $e');
+        _existingAttachments = [];
+        _originalAttachmentIds = [];
+      }
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+
+      // Load images after product data is loaded
+      if (_existingAttachments.isNotEmpty) {
+        await _loadProductImages();
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoadingImages = false;
+          });
+        }
+      }
+
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
@@ -171,7 +265,10 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
         _categoryError = null;
       });
 
-      final categories = await _categoryService.getCategoryByUserId(currentUserId);
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
+      }
+      final categories = await _categoryService.getAllCategories();
 
       setState(() {
         _categories = categories as List;
@@ -397,6 +494,24 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
                   ),
                 ),
                 const SizedBox(height: 4),
+                if (_companyName != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _companyName!,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 Text(
                   _isEditMode ? 'Mode édition activé' : 'Consultation des informations',
                   style: const TextStyle(
@@ -901,26 +1016,49 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
   }
 
   Widget _buildExistingAttachmentTile(int index) {
+    if (index >= _existingImages.length) {
+      return Container(
+        color: Colors.grey.shade200,
+        child: const Center(
+          child: Icon(Icons.image_not_supported_outlined, color: Colors.grey),
+        ),
+      );
+    }
+
     final bytes = _existingImages[index];
+
     return Stack(
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: bytes.isNotEmpty
-              ? Image.memory(bytes, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
-              : Container(
+          child: bytes.isEmpty
+              ? Container(
             color: Colors.grey.shade200,
-            child: const Center(child: Icon(Icons.image_not_supported_outlined, color: Colors.grey)),
+            child: const Center(
+              child: Icon(Icons.image_not_supported_outlined, color: Colors.grey),
+            ),
+          )
+              : Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            cacheHeight: 500,
+            cacheWidth: 500,
           ),
         ),
         if (_isEditMode)
           Positioned(
-            top: 4, right: 4,
+            top: 4,
+            right: 4,
             child: GestureDetector(
               onTap: () => _removeExistingImage(index),
               child: Container(
                 padding: const EdgeInsets.all(4),
-                decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
+                decoration: const BoxDecoration(
+                  color: Colors.red,
+                  shape: BoxShape.circle,
+                ),
                 child: const Icon(Icons.close, color: Colors.white, size: 14),
               ),
             ),
@@ -928,7 +1066,6 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
       ],
     );
   }
-
   Widget _buildInfoSection() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1324,7 +1461,7 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
           "productFinalePrice": _finalPrice,
           "discountPercentage": double.parse(_discountController.text.isEmpty ? '0' : _discountController.text),
           "categoryId": _selectedCategoryId,
-          "userId": currentUserId,
+          "userId": _currentUserId,
           "createdAt": dateList,
           "lastUpdated": dateList,
           "attachmentIds": [],

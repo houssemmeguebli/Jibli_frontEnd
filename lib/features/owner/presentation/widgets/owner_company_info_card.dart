@@ -1,13 +1,87 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import '../../../../core/theme/theme.dart';
+import '../../../../core/services/attachment_service.dart';
 
-class CompanyInfoCard extends StatelessWidget {
+class CompanyInfoCard extends StatefulWidget {
   final Map<String, dynamic> companyData;
 
   const CompanyInfoCard({
     super.key,
     required this.companyData,
   });
+
+  @override
+  State<CompanyInfoCard> createState() => _CompanyInfoCardState();
+}
+
+class _CompanyInfoCardState extends State<CompanyInfoCard> {
+  final AttachmentService _attachmentService = AttachmentService();
+  List<Uint8List> _companyImages = [];
+  bool _isLoadingImages = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCompanyImages();
+  }
+
+  Future<void> _loadCompanyImages() async {
+    try {
+      final companyId = widget.companyData['companyId'] as int?;
+      if (companyId == null) {
+        if (mounted) {
+          setState(() => _isLoadingImages = false);
+        }
+        return;
+      }
+
+      debugPrint('📸 Loading images for company ID: $companyId');
+
+      final attachments = await _attachmentService.getAttachmentsByEntity(
+        'COMPANY',
+        companyId,
+      );
+
+      debugPrint('✅ Found ${attachments.length} attachments for company $companyId');
+
+      final List<Uint8List> images = [];
+
+      for (var attach in attachments) {
+        try {
+          final attachmentId = attach['attachmentId'] as int?;
+          debugPrint('📥 Processing attachment ID: $attachmentId');
+
+          if (attachmentId != null) {
+            final attachmentDownload =
+            await _attachmentService.downloadAttachment(attachmentId);
+            debugPrint('📦 Downloaded attachment size: ${attachmentDownload.data.length} bytes');
+
+            if (attachmentDownload.data.isNotEmpty) {
+              images.add(attachmentDownload.data);
+              debugPrint('✅ Added image to gallery');
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error downloading company attachment: $e');
+        }
+      }
+
+      debugPrint('🎨 Total images loaded: ${images.length}');
+
+      if (mounted) {
+        setState(() {
+          _companyImages = images;
+          _isLoadingImages = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Error loading company images: $e');
+      if (mounted) {
+        setState(() => _isLoadingImages = false);
+      }
+    }
+  }
 
   String _parseValue(dynamic value) {
     if (value == null) return 'Non fourni';
@@ -71,7 +145,7 @@ class CompanyInfoCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  companyData['companyName'] ?? 'Company Name',
+                  widget.companyData['companyName'] ?? 'Company Name',
                   style: TextStyle(
                     fontSize: isMobile ? 22 : 26,
                     fontWeight: FontWeight.w800,
@@ -90,7 +164,7 @@ class CompanyInfoCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    companyData['companySector'] ?? 'Secteur non spécifié',
+                    widget.companyData['companySector'] ?? 'Secteur non spécifié',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
@@ -109,7 +183,7 @@ class CompanyInfoCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  companyData['companyDescription'] ?? 'No description available',
+                  widget.companyData['companyDescription'] ?? 'No description available',
                   style: TextStyle(
                     fontSize: isMobile ? 13 : 14,
                     color: AppColors.textSecondary,
@@ -140,28 +214,28 @@ class CompanyInfoCard extends StatelessWidget {
         _buildInfoRow(
           Icons.email,
           'Email',
-          companyData['companyEmail'],
+          widget.companyData['companyEmail'],
           Icons.copy,
         ),
         _buildDivider(),
         _buildInfoRow(
           Icons.phone,
           'Téléphone',
-          companyData['companyPhone'],
+          widget.companyData['companyPhone'],
           Icons.call,
         ),
         _buildDivider(),
         _buildInfoRow(
           Icons.location_on,
           'Adresse',
-          companyData['companyAddress'],
+          widget.companyData['companyAddress'],
           Icons.navigation,
         ),
         _buildDivider(),
         _buildInfoRow(
           Icons.calendar_today,
           'Crée le ',
-          companyData['createdAt'],
+          widget.companyData['createdAt'],
           Icons.info,
         ),
         _buildDivider(),
@@ -179,7 +253,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.email,
                 'Email',
-                companyData['companyEmail'],
+                widget.companyData['companyEmail'],
                 Icons.copy,
               ),
             ),
@@ -188,7 +262,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.phone,
                 'Téléphone',
-                companyData['companyPhone'],
+                widget.companyData['companyPhone'],
                 Icons.call,
               ),
             ),
@@ -201,7 +275,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.location_on,
                 'Adresse',
-                companyData['companyAddress'],
+                widget.companyData['companyAddress'],
                 Icons.navigation,
               ),
             ),
@@ -214,7 +288,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.calendar_today,
                 'Crée le ',
-                companyData['createdAt'],
+                widget.companyData['createdAt'],
                 Icons.info,
               ),
             ),
@@ -234,7 +308,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.email,
                 'Email',
-                companyData['companyEmail'],
+                widget.companyData['companyEmail'],
                 Icons.copy,
               ),
             ),
@@ -243,7 +317,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.phone,
                 'Téléphone',
-                companyData['companyPhone'],
+                widget.companyData['companyPhone'],
                 Icons.call,
               ),
             ),
@@ -256,7 +330,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.location_on,
                 'Adresse',
-                companyData['companyAddress'],
+                widget.companyData['companyAddress'],
                 Icons.navigation,
               ),
             ),
@@ -269,7 +343,7 @@ class CompanyInfoCard extends StatelessWidget {
               child: _buildInfoRow(
                 Icons.calendar_today,
                 'Crée le ',
-                companyData['createdAt'],
+                widget.companyData['createdAt'],
                 Icons.info,
               ),
             ),

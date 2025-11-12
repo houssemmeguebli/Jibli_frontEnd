@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'dart:math' as math;
 import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/order_service.dart';
 import '../../../../Core/services/order_item_service.dart';
 import '../../../../Core/services/product_service.dart';
-import '../../../../Core/services/user_service.dart';
+import '../../../../core/services/auth_service.dart';
 
 class OwnerStatisticsPage extends StatefulWidget {
   const OwnerStatisticsPage({super.key});
@@ -19,14 +20,14 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
   final OrderService _orderService = OrderService();
   final OrderItemService _orderItemService = OrderItemService();
   final ProductService _productService = ProductService();
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final AuthService _authService = AuthService();
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
   bool _isLoading = true;
   String _selectedPeriod = '30';
-  final int currentUserId = 2;
+  int? _currentUserId;
 
   // Statistics data
   Map<String, dynamic> _stats = {};
@@ -45,6 +46,14 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
+    _loadCurrentUserId();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
     _loadStatistics();
   }
 
@@ -58,41 +67,50 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
     try {
       setState(() => _isLoading = true);
 
-      final allOrders = await _orderService.getAllOrders();
-      final ownerOrders = await _filterOwnerOrders(allOrders);
-      final products =
-      await _productService.getProductByUserId(currentUserId);
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
+      }
 
-      await _calculateStatistics(ownerOrders, products);
+      // Use specific method to get owner's orders directly
+      final ownerOrders = await _orderService.getOrdersByCompanyUserId(_currentUserId!);
+      final products = await _productService.getProductByUserId(_currentUserId!);
 
-      setState(() => _isLoading = false);
-      _animationController.forward();
-    } catch (e) {
-      setState(() => _isLoading = false);
-      _showErrorSnackBar('Erreur de chargement: $e');
-    }
-  }
+      // Fetch order items for owner's orders only
+      final List<Future<List<dynamic>>> orderItemsFutures = [];
+      final List<int> orderIds = [];
 
-  Future<List<Map<String, dynamic>>> _filterOwnerOrders(
-      List<Map<String, dynamic>> allOrders) async {
-    List<Map<String, dynamic>> ownerOrders = [];
+      for (var order in ownerOrders) {
+        final orderId = order['orderId'];
+        if (orderId != null) {
+          orderIds.add(orderId);
+          orderItemsFutures.add(_orderItemService.getOrderItemsByOrder(orderId));
+        }
+      }
 
-    for (var order in allOrders) {
-      final orderId = order['orderId'];
-      if (orderId != null) {
-        final orderItems =
-        await _orderItemService.getOrderItemsByOrder(orderId);
+      final List<List<dynamic>> allOrderItemsList = await Future.wait(orderItemsFutures);
+      final Map<int, List<dynamic>> orderItemsMap = {};
 
-        bool hasOwnerProduct = false;
+      for (int i = 0; i < orderIds.length; i++) {
+        orderItemsMap[orderIds[i]] = allOrderItemsList[i];
+      }
+
+      // Calculate revenue for each order
+      for (var order in ownerOrders) {
+        final orderId = order['orderId'];
+        if (orderId == null) continue;
+
+        final orderItems = orderItemsMap[orderId] ?? [];
         double ownerRevenue = 0.0;
         int ownerItemCount = 0;
 
         for (var item in orderItems) {
           final productId = item['productId'];
           if (productId != null) {
-            final product = await _productService.getProductById(productId);
-            if (product != null && product['userId'] == currentUserId) {
-              hasOwnerProduct = true;
+            final product = products.firstWhere(
+              (p) => p['productId'] == productId,
+              orElse: () => <String, dynamic>{},
+            );
+            if (product.isNotEmpty) {
               ownerItemCount += (item['quantity'] ?? 0) as int;
               ownerRevenue += ((item['quantity'] ?? 0) as int) *
                   ((product['productFinalePrice'] ?? 0) as num).toDouble();
@@ -100,30 +118,39 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
           }
         }
 
-        if (hasOwnerProduct) {
-          order['ownerRevenue'] = ownerRevenue;
-          order['ownerItemCount'] = ownerItemCount;
-          ownerOrders.add(order);
-        }
+        order['totalAmount'] = ownerRevenue;
+        order['totalProducts'] = ownerItemCount;
       }
-    }
 
-    return ownerOrders;
+      await _calculateStatistics(ownerOrders, products, orderItemsMap);
+
+      setState(() => _isLoading = false);
+      _animationController.forward();
+    } catch (e) {
+      setState(() => _isLoading = false);
+      _showErrorSnackBar('Erreur de chargement: $e');
+      debugPrint('Error loading statistics: $e');
+    }
   }
 
-  Future<void> _calculateStatistics(List<Map<String, dynamic>> orders,
-      List<Map<String, dynamic>> products) async {
+
+
+  Future<void> _calculateStatistics(
+      List<Map<String, dynamic>> orders,
+      List<Map<String, dynamic>> products,
+      Map<int, List<dynamic>> orderItemsMap,
+      ) async {
     final now = DateTime.now();
     final periodDays = int.parse(_selectedPeriod);
     final startDate = now.subtract(Duration(days: periodDays));
 
     final periodOrders = orders.where((order) {
-      final orderDate = _parseDate(order['orderDate']);
+      final orderDate = _parseDate(order['createdAt']);
       return orderDate != null && orderDate.isAfter(startDate);
     }).toList();
 
     final totalRevenue = periodOrders.fold<double>(
-        0, (sum, order) => sum + (order['ownerRevenue'] ?? 0.0));
+        0, (sum, order) => sum + (order['totalAmount'] ?? 0.0));
     final totalOrders = periodOrders.length;
     final totalProducts = products.length;
     final avgOrderValue =
@@ -137,37 +164,39 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
 
     final revenueByDay = <String, double>{};
     for (var order in periodOrders) {
-      final orderDate = _parseDate(order['orderDate']);
+      final orderDate = _parseDate(order['createdAt']);
       if (orderDate != null) {
         final dayKey = '${orderDate.day}/${orderDate.month}';
         revenueByDay[dayKey] =
-            (revenueByDay[dayKey] ?? 0) + (order['ownerRevenue'] ?? 0.0);
+            (revenueByDay[dayKey] ?? 0) + (order['totalAmount'] ?? 0.0);
       }
     }
 
     final productSales = <int, Map<String, dynamic>>{};
+
     for (var order in periodOrders) {
       final orderId = order['orderId'];
-      if (orderId != null) {
-        final orderItems =
-        await _orderItemService.getOrderItemsByOrder(orderId);
-        for (var item in orderItems) {
-          final productId = item['productId'];
-          final product = await _productService.getProductById(productId);
-          if (product != null && product['userId'] == currentUserId) {
-            if (!productSales.containsKey(productId)) {
-              productSales[productId] = {
-                'product': product,
-                'quantity': 0,
-                'revenue': 0.0,
-              };
-            }
-            productSales[productId]!['quantity'] +=
-            (item['quantity'] ?? 0) as int;
-            productSales[productId]!['revenue'] += ((item['quantity'] ?? 0)
-            as int) *
-                ((product['productFinalePrice'] ?? 0) as num).toDouble();
+      if (orderId == null) continue;
+
+      final orderItems = orderItemsMap[orderId] ?? [];
+      for (var item in orderItems) {
+        final productId = item['productId'];
+        final product = products.firstWhere(
+          (p) => p['productId'] == productId,
+          orElse: () => <String, dynamic>{},
+        );
+
+        if (product.isNotEmpty) {
+          if (!productSales.containsKey(productId)) {
+            productSales[productId] = {
+              'product': product,
+              'quantity': 0,
+              'revenue': 0.0,
+            };
           }
+          productSales[productId]!['quantity'] += (item['quantity'] ?? 0) as int;
+          productSales[productId]!['revenue'] += ((item['quantity'] ?? 0) as int) *
+              ((product['productFinalePrice'] ?? 0) as num).toDouble();
         }
       }
     }
@@ -216,19 +245,19 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
 
     final currentRevenue = allOrders
         .where((order) {
-      final orderDate = _parseDate(order['orderDate']);
+      final orderDate = _parseDate(order['createdAt']);
       return orderDate != null && orderDate.isAfter(currentPeriodStart);
     })
-        .fold<double>(0, (sum, order) => sum + (order['ownerRevenue'] ?? 0.0));
+        .fold<double>(0, (sum, order) => sum + (order['totalAmount'] ?? 0.0));
 
     final previousRevenue = allOrders
         .where((order) {
-      final orderDate = _parseDate(order['orderDate']);
+      final orderDate = _parseDate(order['createdAt']);
       return orderDate != null &&
           orderDate.isAfter(previousPeriodStart) &&
           orderDate.isBefore(currentPeriodStart);
     })
-        .fold<double>(0, (sum, order) => sum + (order['ownerRevenue'] ?? 0.0));
+        .fold<double>(0, (sum, order) => sum + (order['totalAmount'] ?? 0.0));
 
     if (previousRevenue == 0) return 0;
     return ((currentRevenue - previousRevenue) / previousRevenue * 100);
@@ -285,30 +314,377 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(32),
+    final isMobile = MediaQuery.of(context).size.width < 768;
+    return Skeletonizer(
+      enabled: true,
+      child: CustomScrollView(
+        slivers: [
+          _buildSkeletonHeader(isMobile),
+          _buildSkeletonPeriodSelector(isMobile),
+          _buildSkeletonStatsCards(isMobile),
+          _buildSkeletonChartsSection(isMobile),
+          _buildSkeletonTablesSection(isMobile),
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonHeader(bool isMobile) {
+    return SliverToBoxAdapter(
+      child: Container(
+        padding: EdgeInsets.all(isMobile ? 16 : 24),
+        decoration: BoxDecoration(
+          color: Colors.grey[300],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: isMobile ? 56 : 60,
+              height: isMobile ? 56 : 60,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            const SizedBox(width: 18),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: isMobile ? 22 : 26,
+                    width: 200,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: isMobile ? 12 : 13,
+                    width: 150,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: isMobile ? 24 : 28,
+              height: isMobile ? 24 : 28,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonPeriodSelector(bool isMobile) {
+    return SliverToBoxAdapter(
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: isMobile ? 12 : 24,
+          vertical: isMobile ? 12 : 16,
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: List.generate(4, (index) => Container(
+              margin: const EdgeInsets.only(right: 10),
+              height: 40,
+              width: 80,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(24),
+              ),
+            )),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonStatsCards(bool isMobile) {
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 12 : 24,
+        vertical: isMobile ? 12 : 16,
+      ),
+      sliver: SliverGrid(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: isMobile ? 2 : 4,
+          childAspectRatio: isMobile ? 1.1 : 1.3,
+          crossAxisSpacing: isMobile ? 10 : 16,
+          mainAxisSpacing: isMobile ? 10 : 16,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => Container(
+            padding: EdgeInsets.all(isMobile ? 14 : 18),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              shape: BoxShape.circle,
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.08),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-              strokeWidth: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      width: isMobile ? 42 : 46,
+                      height: isMobile ? 42 : 46,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    Container(
+                      width: 40,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  height: isMobile ? 16 : 18,
+                  width: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  height: isMobile ? 12 : 13,
+                  width: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ],
             ),
+          ),
+          childCount: 4,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonChartsSection(bool isMobile) {
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 12 : 24,
+        vertical: isMobile ? 12 : 16,
+      ),
+      sliver: SliverToBoxAdapter(
+        child: Column(
+          children: [
+            if (isMobile) ...[
+              _buildSkeletonChart(isMobile, 250),
+              const SizedBox(height: 16),
+              _buildSkeletonChart(isMobile, 250),
+            ] else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 2, child: _buildSkeletonChart(isMobile, 300)),
+                  const SizedBox(width: 20),
+                  Expanded(child: _buildSkeletonChart(isMobile, 300)),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonChart(bool isMobile, double height) {
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16 : 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: isMobile ? 42 : 46,
+                height: isMobile ? 42 : 46,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                height: isMobile ? 15 : 17,
+                width: 150,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 24),
-          Text(
-            'Chargement des statistiques...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
+          Container(
+            height: height,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonTablesSection(bool isMobile) {
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 12 : 24,
+        vertical: isMobile ? 12 : 16,
+      ),
+      sliver: SliverToBoxAdapter(
+        child: Column(
+          children: [
+            if (isMobile) ...[
+              _buildSkeletonTable(isMobile),
+              const SizedBox(height: 16),
+              _buildSkeletonTable(isMobile),
+            ] else
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _buildSkeletonTable(isMobile)),
+                  const SizedBox(width: 20),
+                  Expanded(child: _buildSkeletonTable(isMobile)),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonTable(bool isMobile) {
+    return Container(
+      padding: EdgeInsets.all(isMobile ? 16 : 24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                height: isMobile ? 15 : 17,
+                width: 120,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          ...List.generate(5, (index) => Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Row(
+              children: [
+                Container(
+                  width: isMobile ? 32 : 36,
+                  height: isMobile ? 32 : 36,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: isMobile ? 13 : 14,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        height: 12,
+                        width: 80,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  height: 25,
+                  width: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ],
+            ),
+          )),
         ],
       ),
     );
@@ -365,7 +741,7 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Analysez vos performances commerciales en détail',
+                    'Analysez vos performances commerciales ',
                     style: TextStyle(
                       color: Colors.white.withOpacity(0.85),
                       fontSize: isMobile ? 12 : 13,
@@ -902,15 +1278,56 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
       );
     }
 
-    return PieChart(
-      PieChartData(
-        sections: sections,
-        centerSpaceRadius: 40,
-        sectionsSpace: 2,
-      ),
+    return Column(
+      children: [
+        SizedBox(
+          height: 250,
+          child: PieChart(
+            PieChartData(
+              sections: sections,
+              centerSpaceRadius: 40,
+              sectionsSpace: 2,
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        // Legend
+        Wrap(
+          spacing: 16,
+          runSpacing: 12,
+          children: List.generate(_orderStatusData.length, (index) {
+            final data = _orderStatusData[index];
+            final status = data['status'] as String;
+            final count = data['count'] as int;
+            final color = colors[index % colors.length];
+
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${_getStatusLabel(status)} ($count)',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            );
+          }),
+        ),
+      ],
     );
   }
-
   Widget _buildTablesSection(bool isMobile) {
     return SliverPadding(
       padding: EdgeInsets.symmetric(
@@ -1156,8 +1573,8 @@ class _OwnerStatisticsPageState extends State<OwnerStatisticsPage>
   Widget _buildOrderRow(Map<String, dynamic> order, bool isMobile) {
     final orderId = order['orderId'] ?? 0;
     final status = order['orderStatus'] ?? 'UNKNOWN';
-    final revenue = order['ownerRevenue'] ?? 0.0;
-    final date = _parseDate(order['orderDate']);
+    final revenue = order['totalAmount'] ?? 0.0;
+    final date = _parseDate(order['createdAt']);
 
     final statusColors = {
       'PENDING': Colors.orange,

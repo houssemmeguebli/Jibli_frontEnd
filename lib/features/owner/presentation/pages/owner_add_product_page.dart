@@ -10,6 +10,7 @@ import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/category_service.dart';
 import '../../../../Core/services/product_service.dart';
 import '../../../../Core/services/attachment_service.dart';
+import '../../../../core/services/auth_service.dart';
 
 
 class AddProductPage extends StatefulWidget {
@@ -34,7 +35,8 @@ class _AddProductPageState extends State<AddProductPage> with SingleTickerProvid
   double _finalPrice = 0.0;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
-  final currentUserId = 2;
+  int? _currentUserId;
+  final AuthService _authService = AuthService();
   final CategoryService _categoryService = CategoryService();
   final ProductService _productService = ProductService();
   final AttachmentService _attachmentService = AttachmentService();
@@ -60,7 +62,15 @@ class _AddProductPageState extends State<AddProductPage> with SingleTickerProvid
     );
 
     _animationController.forward();
+    _loadCurrentUserId();
     _loadCategories();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
   }
 
   Future<void> _loadCategories() async {
@@ -70,7 +80,10 @@ class _AddProductPageState extends State<AddProductPage> with SingleTickerProvid
         _categoryError = null;
       });
 
-      final categories = await _categoryService.getCategoryByUserId(currentUserId);
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
+      }
+      final categories = await _categoryService.getAllCategories();
 
       setState(() {
         _categories = categories as List;
@@ -1017,10 +1030,9 @@ class _AddProductPageState extends State<AddProductPage> with SingleTickerProvid
           "productFinalePrice": _finalPrice,
           "discountPercentage": double.parse(_discountController.text.isEmpty ? '0' : _discountController.text),
           "categoryId": _selectedCategoryId,
-          "userId": currentUserId,
+          "userId": _currentUserId,
           "createdAt": dateList,
           "lastUpdated": dateList,
-          "userId":currentUserId,
           "attachmentIds": [],
           "available": _isAvailable,
           "reviewIds": [],

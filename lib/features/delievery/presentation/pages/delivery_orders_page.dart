@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/order_service.dart';
+import '../../../../core/services/auth_service.dart';
 import '../../../../core/services/pagination_service.dart';
 import 'delivery_order_details.dart';
 
@@ -13,6 +14,7 @@ class DeliveryOrdersPage extends StatefulWidget {
 
 class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
   final OrderService _orderService = OrderService();
+  final AuthService _authService = AuthService();
   final PaginationService _paginationService = PaginationService();
   PaginationState _paginationState = PaginationState(currentPage: 1, totalItems: 0, itemsPerPage: 10);
   List<Map<String, dynamic>> _orders = [];
@@ -20,7 +22,7 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
   bool _isLoading = true;
   String _selectedFilter = 'WAITING';
   String _searchQuery = '';
-  static const int currentDeliveryId = 3;
+  int? _currentDeliveryId;
 
   @override
   void initState() {
@@ -31,7 +33,11 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
   Future<void> _loadOrders() async {
     try {
       setState(() => _isLoading = true);
-      final orders = await _orderService.getOrdersByDeliveryId(currentDeliveryId);
+      _currentDeliveryId = await _authService.getUserId();
+      if (_currentDeliveryId == null) {
+        throw Exception('Delivery ID not found');
+      }
+      final orders = await _orderService.getOrdersByDeliveryId(_currentDeliveryId!);
       setState(() {
         _orders = orders;
         _filteredOrders = orders;
@@ -191,17 +197,24 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
             padding: const EdgeInsets.all(16),
             sliver: _isLoading
                 ? const SliverToBoxAdapter(child: Center(child: CircularProgressIndicator()))
+                : _isLoading
+                ? SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildSkeletonOrderCard(),
+                      childCount: 5,
+                    ),
+                  )
                 : _filteredOrders.isEmpty
-                ? SliverToBoxAdapter(child: _buildEmptyState())
-                : SliverList(
-              delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final paginatedOrders = _paginationService.getPageItems(_filteredOrders, _paginationState.currentPage);
-                      return _buildOrderCard(paginatedOrders[index]);
-                    },
-                childCount: _paginationService.getPageItems(_filteredOrders, _paginationState.currentPage).length,
-              ),
-            ),
+                    ? SliverToBoxAdapter(child: _buildEmptyState())
+                    : SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final paginatedOrders = _paginationService.getPageItems(_filteredOrders, _paginationState.currentPage);
+                            return _buildOrderCard(paginatedOrders[index]);
+                          },
+                          childCount: _paginationService.getPageItems(_filteredOrders, _paginationState.currentPage).length,
+                        ),
+                      ),
           ),
           if (_filteredOrders.isNotEmpty) SliverToBoxAdapter(child: _buildPaginationBar()),
           const SliverToBoxAdapter(child: SizedBox(height: 20)),
@@ -355,21 +368,94 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
     final waitingCount = _orders.where((o) => o['orderStatus'] == 'WAITING').length;
     final pickedUpCount = _orders.where((o) => o['orderStatus'] == 'PICKED_UP').length;
     final deliveredCount = _orders.where((o) => o['orderStatus'] == 'DELIVERED').length;
+    final rejectedCount = _orders.where((o) => o['orderStatus'] == 'REJECTED').length;
 
-    return Container(
+    final stats = [
+      {'label': 'En attente', 'count': waitingCount, 'color': Colors.orange, 'icon': Icons.schedule_rounded},
+      {'label': 'Récupérées', 'count': pickedUpCount, 'color': Colors.blue, 'icon': Icons.local_shipping_rounded},
+      {'label': 'Livrées', 'count': deliveredCount, 'color': Colors.green, 'icon': Icons.check_circle_rounded},
+      {'label': 'Refusées', 'count': rejectedCount, 'color': Colors.red, 'icon': Icons.cancel_rounded},
+    ];
+
+    return Padding(
       padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          Expanded(child: _buildStatCard('En attente', waitingCount, Colors.orange, Icons.schedule_rounded)),
-          const SizedBox(width: 12),
-          Expanded(child: _buildStatCard('Récupérées', pickedUpCount, Colors.blue, Icons.local_shipping_rounded)),
-          const SizedBox(width: 12),
-          Expanded(child: _buildStatCard('Livrées', deliveredCount, Colors.green, Icons.check_circle_rounded)),
-        ],
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.4,
+        ),
+        itemCount: stats.length,
+        itemBuilder: (context, index) {
+          final stat = stats[index];
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: (stat['color'] as Color).withOpacity(0.2),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.04),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    stat['label'] as String,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[700],
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: (stat['color'] as Color).withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        stat['icon'] as IconData,
+                        color: stat['color'] as Color,
+                        size: 22,
+                      ),
+                    ),
+                    Text(
+                      '${stat['count']}',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        color: stat['color'] as Color,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
-
   Widget _buildStatCard(String title, int count, Color color, IconData icon) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -730,3 +816,107 @@ class _DeliveryOrdersPageState extends State<DeliveryOrdersPage> {
     }
   }
 }
+  Widget _buildSkeletonOrderCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[200],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                width: 100,
+                height: 16,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              Container(
+                width: 80,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 120,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[400],
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      width: 80,
+                      height: 12,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[400],
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: 60,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(7),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                width: 100,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              Container(
+                width: 80,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }

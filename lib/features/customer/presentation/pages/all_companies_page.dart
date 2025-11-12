@@ -66,8 +66,9 @@ class _AllCompaniesPageState extends State<AllCompaniesPage> with SingleTickerPr
   Future<void> _loadCompanies() async {
     setState(() => _isLoading = true);
 
+
     try {
-      final companies = await _companyService.getAllCompanies();
+      final companies = await _companyService.getActiveCompanies();
 
       setState(() {
         _companies = List<Map<String, dynamic>>.from(companies);

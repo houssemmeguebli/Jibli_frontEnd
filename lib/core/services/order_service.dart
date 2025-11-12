@@ -1,41 +1,72 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../utils/constants.dart';
+import 'auth_service.dart';
 
 class OrderService {
+  static const String baseUrl = ApiConstants.baseUrl;
+  final AuthService _authService = AuthService();
 
-  static const String baseUrl = 'http://192.168.1.216:8080';
+  Future<Map<String, String>> _getHeaders() async {
+    final token = await _authService.getAccessToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
 
-  Future<List<Map<String, dynamic>>> getAllOrders() async {
-    final response = await http.get(Uri.parse('$baseUrl/orders'));
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        return List<Map<String, dynamic>>.from(decoded);
-      } else {
-        return [Map<String, dynamic>.from(decoded)];
+  Future<List<Map<String, dynamic>>> getAllOrders({int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return List<Map<String, dynamic>>.from(decoded);
+        } else {
+          return [Map<String, dynamic>.from(decoded)];
+        }
       }
-    } else {
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getAllOrders(retry: 1);
+      }
       throw Exception('Failed to load orders: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
-  Future<List<Map<String, dynamic>>> getOrdersByUserId(int id) async {
-    final response = await http.get(Uri.parse('$baseUrl/orders/user/$id'));
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
-      } else {
-        return [_flattenOrder(decoded)];
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<List<Map<String, dynamic>>> getOrdersByUserId(int id, {int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/user/$id'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
+        } else {
+          return [_flattenOrder(decoded)];
+        }
       }
-    } else {
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getOrdersByUserId(id, retry: 1);
+      }
       throw Exception('Failed to load orders: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
   Map<String, dynamic> _flattenOrder(dynamic orderData) {
     final Map<String, dynamic> flattened = {};
-    
+
     if (orderData is Map<String, dynamic>) {
       orderData.forEach((key, value) {
         if (value is List) {
@@ -47,122 +78,208 @@ class OrderService {
         }
       });
     }
-    
+
     return flattened;
   }
-  Future<void> patchOrderStatus(int id, String orderStatus) async {
+
+  Future<void> patchOrderStatus(int id, String orderStatus, {int retry = 0}) async {
     try {
-      print('Patching Order $id with status: $orderStatus'); // Debug log
-
       final response = await http.patch(
-        Uri.parse('http://192.168.1.216:8080/orders/orderStatus/$id'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'orderStatus': orderStatus,
-        }),
+        Uri.parse('$baseUrl/orders/orderStatus/$id'),
+        headers: await _getHeaders(),
+        body: jsonEncode({'orderStatus': orderStatus}),
       );
-
-      print('Response status: ${response.statusCode}'); // Debug log
-      print('Response body: ${response.body}'); // Debug log
-
-      if (response.statusCode != 200 && response.statusCode != 204) {
-        throw Exception('Failed to update order status: ${response.body}');
+      if (response.statusCode == 200 || response.statusCode == 204) return;
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return patchOrderStatus(id, orderStatus, retry: 1);
       }
+      throw Exception('Failed to update order status: ${response.body}');
     } catch (e) {
-      print('Error: $e'); // Debug log
       rethrow;
     }
   }
 
-  Future<List<Map<String, dynamic>>> getOrderById(int userId) async {
-    final response = await http.get(Uri.parse('$baseUrl/orders/$userId'));
-    if (response.statusCode == 200) {
-      final List<dynamic> jsonData = jsonDecode(response.body);
-      // Convert to List<Map<String, dynamic>>
-      return jsonData.cast<Map<String, dynamic>>();
-    } else {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<List<Map<String, dynamic>>> getOrderById(int userId, {int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/$userId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final List<dynamic> jsonData = jsonDecode(response.body);
+        return jsonData.cast<Map<String, dynamic>>();
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getOrderById(userId, retry: 1);
+      }
       throw Exception("Failed to load orders: ${response.statusCode}");
+    } catch (e) {
+      rethrow;
     }
   }
 
-  Future<Map<String, dynamic>> createOrder(Map<String, dynamic> order) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/orders'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(order),
-    );
-    if (response.statusCode == 201) {
-      return Map<String, dynamic>.from(jsonDecode(response.body));
-    } else {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<Map<String, dynamic>> createOrder(Map<String, dynamic> order, {int retry = 0}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/orders'),
+        headers: await _getHeaders(),
+        body: jsonEncode(order),
+      );
+      if (response.statusCode == 201) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return createOrder(order, retry: 1);
+      }
       throw Exception('Failed to create order: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
-  Future<Map<String, dynamic>?> updateOrder(int id, Map<String, dynamic> order) async {
-    final response = await http.put(
-      Uri.parse('$baseUrl/orders/$id'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(order),
-    );
-    if (response.statusCode == 200) {
-      return Map<String, dynamic>.from(jsonDecode(response.body));
-    } else if (response.statusCode == 404) {
-      return null;
-    } else {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<Map<String, dynamic>?> updateOrder(int id, Map<String, dynamic> order, {int retry = 0}) async {
+    try {
+      final response = await http.put(
+        Uri.parse('$baseUrl/orders/$id'),
+        headers: await _getHeaders(),
+        body: jsonEncode(order),
+      );
+      if (response.statusCode == 200) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      if (response.statusCode == 404) {
+        return null;
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return updateOrder(id, order, retry: 1);
+      }
       throw Exception('Failed to update order: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
-  Future<bool> deleteOrder(int id) async {
-    final response = await http.delete(Uri.parse('$baseUrl/orders/$id'));
-    if (response.statusCode == 204) {
-      return true;
-    } else if (response.statusCode == 404) {
-      return false;
-    } else {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<bool> deleteOrder(int id, {int retry = 0}) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/orders/$id'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 204 || response.statusCode == 200) {
+        return true;
+      }
+      if (response.statusCode == 404) {
+        return false;
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return deleteOrder(id, retry: 1);
+      }
       throw Exception('Failed to delete order: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
-  Future<List<Map<String, dynamic>>> getOrderItems(int orderId) async {
-    final response = await http.get(Uri.parse('$baseUrl/orders/$orderId/order-items'));
-    if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(jsonDecode(response.body));
-    } else {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<List<Map<String, dynamic>>> getOrderItems(int orderId, {int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/$orderId/order-items'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        return List<Map<String, dynamic>>.from(jsonDecode(response.body));
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getOrderItems(orderId, retry: 1);
+      }
       throw Exception('Failed to load order items: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
-  Future<List<Map<String, dynamic>>> getOrdersByDeliveryId(int deliveryId) async {
-    final response = await http.get(Uri.parse('$baseUrl/orders/deliveryOrders/$deliveryId'));
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
-      } else {
-        return [_flattenOrder(decoded)];
+
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<List<Map<String, dynamic>>> getOrdersByDeliveryId(int deliveryId, {int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/deliveryOrders/$deliveryId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
+        } else {
+          return [_flattenOrder(decoded)];
+        }
       }
-    } else {
-      throw Exception('Failed to load orders: ${response.statusCode}');
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> getOrdersByCompanyId(int companyId) async {
-    final response = await http.get(Uri.parse('$baseUrl/orders/companyOrders/$companyId'));
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
-      } else {
-        return [_flattenOrder(decoded)];
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getOrdersByDeliveryId(deliveryId, retry: 1);
       }
-    } else {
       throw Exception('Failed to load orders: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
-
-
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<List<Map<String, dynamic>>> getOrdersByCompanyId(int companyId, {int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/companyOrders/$companyId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
+        } else {
+          return [_flattenOrder(decoded)];
+        }
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getOrdersByCompanyId(companyId, retry: 1);
+      }
+      throw Exception('Failed to load orders: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
+    }
+  }
+  Future<List<Map<String, dynamic>>> getOrdersByCompanyUserId(int userId, {int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders/companyOrders/user/$userId'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return decoded.map<Map<String, dynamic>>((item) => _flattenOrder(item)).toList();
+        } else {
+          return [_flattenOrder(decoded)];
+        }
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getOrdersByCompanyUserId(userId, retry: 1);
+      }
+      throw Exception('Failed to load orders: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
+    }
+  }
 
 }

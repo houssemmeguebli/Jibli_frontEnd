@@ -4,12 +4,12 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:universal_html/html.dart' as html;
-import 'dart:convert';
 import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/category_service.dart';
 import '../../../../Core/services/product_service.dart';
 import '../../../../Core/services/attachment_service.dart';
 import '../../../../Core/services/company_service.dart';
+import '../../../../core/services/auth_service.dart';
 
 class AddProductDialog extends StatefulWidget {
   final VoidCallback? onProductAdded;
@@ -19,7 +19,8 @@ class AddProductDialog extends StatefulWidget {
   State<AddProductDialog> createState() => _AddProductDialogState();
 }
 
-class _AddProductDialogState extends State<AddProductDialog> with SingleTickerProviderStateMixin {
+class _AddProductDialogState extends State<AddProductDialog>
+    with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _priceController = TextEditingController();
@@ -33,15 +34,19 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
   final ImagePicker _picker = ImagePicker();
   double _finalPrice = 0.0;
   late AnimationController _slideController;
-  final currentUserId = 2;
+  int? _currentUserId;
+  final AuthService _authService = AuthService();
+
   final CategoryService _categoryService = CategoryService();
   final ProductService _productService = ProductService();
   final AttachmentService _attachmentService = AttachmentService();
   final CompanyService _companyService = CompanyService();
+
   List<dynamic> _categories = [];
   List<Map<String, dynamic>> _companies = [];
   int? _selectedCategoryId;
   int? _selectedCompanyId;
+
   bool _isLoadingCategories = true;
   bool _isLoadingCompanies = true;
   String? _categoryError;
@@ -58,10 +63,17 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
-
     _slideController.forward();
+    _loadCurrentUserId();
     _loadCategories();
     _loadCompanies();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
   }
 
   @override
@@ -74,6 +86,9 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     super.dispose();
   }
 
+  // -----------------------------------------------------------------------
+  //  Helpers
+  // -----------------------------------------------------------------------
   void _calculateFinalPrice() {
     final price = double.tryParse(_priceController.text) ?? 0.0;
     final discount = double.tryParse(_discountController.text) ?? 0.0;
@@ -88,7 +103,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
         _isLoadingCategories = true;
         _categoryError = null;
       });
-      final categories = await _categoryService.getCategoryByUserId(currentUserId);
+      final categories = await _categoryService.getAllCategories();
       setState(() {
         _categories = categories as List;
         _isLoadingCategories = false;
@@ -109,7 +124,10 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
         _isLoadingCompanies = true;
         _companyError = null;
       });
-      final companiesData = await _companyService.getCompanyByUserID(currentUserId);
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
+      }
+      final companiesData = await _companyService.getCompanyByUserID(_currentUserId!);
       List<Map<String, dynamic>> companiesList = [];
 
       if (companiesData != null) {
@@ -216,7 +234,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
           entityId: productId,
         );
       } catch (e) {
-        throw Exception('Échec upload image $i: $e');
+        throw Exception('Échec upload image ${i + 1}: $e');
       }
     }
   }
@@ -240,10 +258,18 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
 
       try {
         final DateTime now = DateTime.now();
-        final List<int> dateList = [now.year, now.month, now.day, now.hour, now.minute, now.second];
+        final List<int> dateList = [
+          now.year,
+          now.month,
+          now.day,
+          now.hour,
+          now.minute,
+          now.second
+        ];
 
         final double productPrice = double.parse(_priceController.text);
-        final double discountPercentage = double.parse(_discountController.text.isEmpty ? '0' : _discountController.text);
+        final double discountPercentage =
+        double.parse(_discountController.text.isEmpty ? '0' : _discountController.text);
         final double productFinalePrice = _finalPrice;
 
         final Map<String, dynamic> product = {
@@ -254,7 +280,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
           "discountPercentage": discountPercentage,
           "categoryId": _selectedCategoryId,
           "companyId": _selectedCompanyId,
-          "userId": currentUserId,
+          "userId": _currentUserId,
           "createdAt": dateList,
           "lastUpdated": dateList,
           "attachmentIds": [],
@@ -263,17 +289,23 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
           "orderItemIds": []
         };
 
-
+        debugPrint('Creating product: ${product['productName']}');
         final createdProduct = await _productService.createProduct(product);
         final int productId = createdProduct['productId'] as int;
+        debugPrint('Product created with ID: $productId');
+
+        // ---- Upload images ----
+        debugPrint('Uploading ${_selectedImages.length} images...');
+        await _addAttachmentsToProduct(productId);
+        debugPrint('All images uploaded successfully');
 
         if (mounted) {
-          _showSnackBar('Produit ajouté avec succès! 🎉', const Color(0xFF00B894));
+          _showSnackBar('Produit ajouté avec succès!', const Color(0xFF00B894));
           widget.onProductAdded?.call();
           Navigator.pop(context);
         }
       } catch (e) {
-        debugPrint('❌ Erreur lors de la création du produit: $e');
+        debugPrint('Erreur lors de la création du produit: $e');
         if (mounted) {
           _showSnackBar('Erreur: ${e.toString()}', Colors.red);
         }
@@ -288,7 +320,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(fontWeight: FontWeight.w600)),
+        content: Text(message,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
         backgroundColor: color,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -298,6 +331,9 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // -----------------------------------------------------------------------
+  //  UI
+  // -----------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 600;
@@ -375,6 +411,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Header ---------------------------
   Widget _buildHeader(bool isMobile) {
     return Container(
       padding: EdgeInsets.all(isMobile ? 16 : 24),
@@ -397,7 +434,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
               color: Colors.white.withOpacity(0.2),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(Icons.add_shopping_cart_rounded, color: Colors.white, size: 28),
+            child: const Icon(Icons.add_shopping_cart_rounded,
+                color: Colors.white, size: 28),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -441,6 +479,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Image Section ---------------------------
   Widget _buildImageSection(bool isMobile) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -524,7 +563,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.close_rounded, color: Colors.white, size: 14),
+                        child: const Icon(Icons.close_rounded,
+                            color: Colors.white, size: 14),
                       ),
                     ),
                   ),
@@ -560,9 +600,13 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      _selectedImages.length < 10 ? 'Ajouter des images' : 'Maximum atteint',
+                      _selectedImages.length < 10
+                          ? 'Ajouter des images'
+                          : 'Maximum atteint',
                       style: TextStyle(
-                        color: _selectedImages.length < 10 ? AppColors.primary : Colors.grey.withOpacity(0.5),
+                        color: _selectedImages.length < 10
+                            ? AppColors.primary
+                            : Colors.grey.withOpacity(0.5),
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
                       ),
@@ -585,6 +629,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Product Name ---------------------------
   Widget _buildProductNameSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -610,13 +655,15 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Description ---------------------------
   Widget _buildDescriptionSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(Icons.description_rounded, color: AppColors.primary, size: 20),
+            Icon(Icons.description_rounded,
+                color: AppColors.primary, size: 20),
             const SizedBox(width: 10),
             const Text(
               'Description',
@@ -635,6 +682,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Selections Row ---------------------------
   Widget _buildSelectionsRow(bool isMobile) {
     return Column(
       children: [
@@ -645,13 +693,15 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Pricing ---------------------------
   Widget _buildPricingSection(bool isMobile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(Icons.price_change_rounded, color: AppColors.primary, size: 20),
+            Icon(Icons.price_change_rounded,
+                color: AppColors.primary, size: 20),
             const SizedBox(width: 10),
             const Text(
               'Tarification',
@@ -700,6 +750,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Final Price Display ---------------------------
   Widget _buildFinalPriceDisplay() {
     final originalPrice = double.tryParse(_priceController.text) ?? 0.0;
     final hasDiscount = _discountController.text.isNotEmpty && _finalPrice < originalPrice;
@@ -762,7 +813,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
           ),
           if (hasDiscount)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [Color(0xFFFF6B6B), Color(0xFFEE5A6F)],
@@ -778,7 +829,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.local_fire_department_rounded, color: Colors.white, size: 18),
+                  const Icon(Icons.local_fire_department_rounded,
+                      color: Colors.white, size: 14),
                   const SizedBox(width: 6),
                   Text(
                     '-${_discountController.text}%',
@@ -796,14 +848,19 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Availability Switch ---------------------------
   Widget _buildAvailabilitySwitch() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _isAvailable ? const Color(0xFF00B894).withOpacity(0.08) : Colors.red.withOpacity(0.08),
+        color: _isAvailable
+            ? const Color(0xFF00B894).withOpacity(0.08)
+            : Colors.red.withOpacity(0.08),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: _isAvailable ? const Color(0xFF00B894).withOpacity(0.25) : Colors.red.withOpacity(0.25),
+          color: _isAvailable
+              ? const Color(0xFF00B894).withOpacity(0.25)
+              : Colors.red.withOpacity(0.25),
           width: 1.5,
         ),
       ),
@@ -815,7 +872,9 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: _isAvailable ? const Color(0xFF00B894).withOpacity(0.15) : Colors.red.withOpacity(0.15),
+                  color: _isAvailable
+                      ? const Color(0xFF00B894).withOpacity(0.15)
+                      : Colors.red.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
@@ -859,6 +918,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Footer Buttons ---------------------------
   Widget _buildFooterButtons(bool isMobile) {
     return Container(
       padding: EdgeInsets.all(isMobile ? 16 : 24),
@@ -874,7 +934,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
               onPressed: () => Navigator.pop(context),
               style: OutlinedButton.styleFrom(
                 padding: EdgeInsets.symmetric(vertical: isMobile ? 13 : 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
                 side: BorderSide(color: Colors.grey[300]!, width: 1.5),
               ),
               child: Text(
@@ -893,7 +954,10 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
             child: Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [AppColors.primary, AppColors.primary.withOpacity(0.85)],
+                  colors: [
+                    AppColors.primary,
+                    AppColors.primary.withOpacity(0.85)
+                  ],
                 ),
                 borderRadius: BorderRadius.circular(14),
                 boxShadow: [
@@ -910,7 +974,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
                   backgroundColor: Colors.transparent,
                   shadowColor: Colors.transparent,
                   padding: EdgeInsets.symmetric(vertical: isMobile ? 13 : 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
                   disabledBackgroundColor: Colors.grey.withOpacity(0.5),
                 ),
                 child: _isSubmitting
@@ -939,7 +1004,8 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
                     : Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                    const Icon(Icons.check_circle_rounded,
+                        color: Colors.white, size: 20),
                     const SizedBox(width: 10),
                     Text(
                       'Enregistrer',
@@ -959,6 +1025,7 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
     );
   }
 
+  // --------------------------- Modern TextField ---------------------------
   Widget _buildModernTextField({
     required TextEditingController controller,
     required String hint,
@@ -973,14 +1040,20 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
       controller: controller,
       maxLines: maxLines,
       keyboardType: isNumber
-          ? (isDecimal ? const TextInputType.numberWithOptions(decimal: true) : TextInputType.number)
+          ? (isDecimal
+          ? const TextInputType.numberWithOptions(decimal: true)
+          : TextInputType.number)
           : TextInputType.text,
       inputFormatters: isNumber
-          ? [FilteringTextInputFormatter.allow(isDecimal ? RegExp(r'^\d*\.?\d*') : RegExp(r'\d'))]
+          ? [
+        FilteringTextInputFormatter.allow(
+            isDecimal ? RegExp(r'^\d*\.?\d*') : RegExp(r'\d'))
+      ]
           : null,
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: TextStyle(color: Colors.grey[400], fontWeight: FontWeight.w500),
+        hintStyle:
+        TextStyle(color: Colors.grey[400], fontWeight: FontWeight.w500),
         prefixIcon: Icon(icon, color: AppColors.primary, size: 22),
         suffixText: suffix,
         suffixStyle: TextStyle(
@@ -1015,13 +1088,15 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
         ),
         filled: true,
         fillColor: Colors.grey[50],
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding:
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
       validator: validator,
     );
   }
 
+  // --------------------------- Dropdown Helpers ---------------------------
   Widget _buildCategoryDropdown() {
     return _buildDropdownField(
       label: 'Catégorie',
@@ -1092,7 +1167,10 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
             const SizedBox(width: 12),
             Text(
               'Chargement...',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -1109,19 +1187,23 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
         ),
         child: Row(
           children: [
-            const Icon(Icons.error_outline_rounded, color: Colors.red, size: 20),
+            const Icon(Icons.error_outline_rounded,
+                color: Colors.red, size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 error,
-                style: const TextStyle(color: Colors.red, fontSize: 13, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                    color: Colors.red, fontSize: 13, fontWeight: FontWeight.w600),
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.refresh_rounded, color: AppColors.primary, size: 20),
+              icon: const Icon(Icons.refresh_rounded,
+                  color: AppColors.primary, size: 20),
               onPressed: onRetry,
               padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              constraints:
+              const BoxConstraints(minWidth: 36, minHeight: 36),
             ),
           ],
         ),
@@ -1138,12 +1220,16 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
         ),
         child: Row(
           children: [
-            Icon(Icons.info_outline_rounded, color: Colors.orange[700], size: 20),
+            Icon(Icons.info_outline_rounded,
+                color: Colors.orange[700], size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 'Aucun élément disponible',
-                style: TextStyle(color: Colors.orange[700], fontSize: 13, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: Colors.orange[700],
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600),
               ),
             ),
           ],
@@ -1174,21 +1260,24 @@ class _AddProductDialogState extends State<AddProductDialog> with SingleTickerPr
         ),
         filled: true,
         fillColor: Colors.grey[50],
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding:
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
       items: items
           .map((item) => DropdownMenuItem(
         value: item.$1,
         child: Text(
           item.$2,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+          style: const TextStyle(
+              fontSize: 14, fontWeight: FontWeight.w500),
         ),
       ))
           .toList(),
       onChanged: onChanged,
       validator: (v) => v == null ? 'Sélection obligatoire' : null,
       isExpanded: true,
-      icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.primary),
+      icon: const Icon(Icons.keyboard_arrow_down_rounded,
+          color: AppColors.primary),
     );
   }
 }

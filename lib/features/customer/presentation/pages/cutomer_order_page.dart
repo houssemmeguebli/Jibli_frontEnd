@@ -1,18 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'dart:typed_data';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/user_service.dart';
 import '../../../../Core/services/order_service.dart';
 import '../../../../Core/services/order_item_service.dart';
+import '../../../../core/services/attachment_service.dart';
+import 'home_page.dart';
+import '../widgets/location_picker_widget.dart';
+import 'package:latlong2/latlong.dart';
 
 class CustomerOrderPage extends StatefulWidget {
   final List<Map<String, dynamic>> cartItems;
   final double totalAmount;
+  final double deliveryFee;
   final int userId;
+  final String? companyName;
+  final Map<String, dynamic>? company;
 
   const CustomerOrderPage({
     required this.cartItems,
     required this.totalAmount,
+    required this.deliveryFee,
     required this.userId,
+    this.companyName,
+    this.company,
     super.key,
   });
 
@@ -21,26 +35,82 @@ class CustomerOrderPage extends StatefulWidget {
 }
 
 class _CustomerOrderPageState extends State<CustomerOrderPage> {
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
   final OrderService _orderService = OrderService();
   final OrderItemService _orderItemService = OrderItemService();
+  final AttachmentService _attachmentService = AttachmentService();
+  final _formKey = GlobalKey<FormState>();
 
   late TextEditingController _nameController;
   late TextEditingController _emailController;
   late TextEditingController _addressController;
   late TextEditingController _phoneController;
+  late TextEditingController _notesController;
 
   bool _isLoading = true;
   bool _isSubmitting = false;
+  late Map<int, Uint8List?> _productImages;
+  LatLng? _selectedLocation;
 
   @override
   void initState() {
     super.initState();
+    _productImages = {};
     _nameController = TextEditingController();
     _emailController = TextEditingController();
     _addressController = TextEditingController();
     _phoneController = TextEditingController();
+    _notesController = TextEditingController();
     _loadUserData();
+    _loadProductImages();
+  }
+
+  Future<void> _loadProductImages() async {
+    try {
+      for (var item in widget.cartItems) {
+        final productId = item['productId'] as int?;
+        if (productId != null && !_productImages.containsKey(productId)) {
+          await _loadProductImage(productId);
+        }
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Error loading product images: $e');
+    }
+  }
+
+  Future<void> _loadProductImage(int productId) async {
+    try {
+      final attachments =
+      await _attachmentService.findByProductProductId(productId);
+
+      if (attachments.isNotEmpty) {
+        try {
+          final firstAttachment = attachments.first as Map<String, dynamic>;
+          final attachmentId = firstAttachment['attachmentId'] as int?;
+
+          if (attachmentId != null) {
+            final attachmentDownload =
+            await _attachmentService.downloadAttachment(attachmentId);
+            if (attachmentDownload.data.isNotEmpty) {
+              _productImages[productId] = attachmentDownload.data;
+            } else {
+              _productImages[productId] = null;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error downloading attachment: $e');
+          _productImages[productId] = null;
+        }
+      } else {
+        _productImages[productId] = null;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error loading product image for $productId: $e');
+      _productImages[productId] = null;
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -74,86 +144,178 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
     _emailController.dispose();
     _addressController.dispose();
     _phoneController.dispose();
+    _notesController.dispose();
     super.dispose();
   }
 
+  String? _validateName(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Le nom est requis';
+    }
+    if (value.length < 3) {
+      return 'Le nom doit contenir au moins 3 caractères';
+    }
+    return null;
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegex.hasMatch(value)) {
+      return 'Veuillez entrer un email valide';
+    }
+    return null;
+  }
+
+  String? _validatePhone(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Le téléphone est requis';
+    }
+    final digitsOnly = value.replaceAll(RegExp(r'[^\d]'), '');
+    if (digitsOnly.length != 8) {
+      return 'Le numéro doit contenir 8 chiffres';
+    }
+    return null;
+  }
+
+  String? _validateAddress(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'L\'adresse est requise';
+    }
+    if (value.length < 5) {
+      return 'L\'adresse doit contenir au moins 5 caractères';
+    }
+    return null;
+  }
+
   Future<void> _submitOrder() async {
-    if (_nameController.text.isEmpty ||
-        _emailController.text.isEmpty ||
-        _addressController.text.isEmpty ||
-        _phoneController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Veuillez remplir tous les champs'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+    if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    // Show confirmation dialog
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: const Text('Confirmer la commande'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
           children: [
-            Text(
-              'Êtes-vous sûr de vouloir passer cette commande ?',
-              style: const TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 16),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: AppColors.background,
+                color: AppColors.primary.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildDetailRow('Nom', _nameController.text),
-                  const SizedBox(height: 8),
-                  _buildDetailRow('Email', _emailController.text),
-                  const SizedBox(height: 8),
-                  _buildDetailRow('Téléphone', _phoneController.text),
-                  const SizedBox(height: 8),
-                  _buildDetailRow('Adresse', _addressController.text),
-                  const SizedBox(height: 8),
-                  _buildDetailRow(
-                    'Montant Total',
-                    '${(widget.totalAmount).toStringAsFixed(2)} DT',
-                    isTotal: true,
-                  ),
-                ],
+              child: Icon(
+                Icons.check_circle_outline,
+                color: AppColors.primary,
+                size: 24,
               ),
             ),
+            const SizedBox(width: 12),
+            const Text('Confirmation'),
           ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Êtes-vous sûr de vouloir passer cette commande ?',
+                style: TextStyle(
+                  fontSize: 15,
+                  color: Colors.grey[700],
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppColors.primary.withOpacity(0.08),
+                      AppColors.primary.withOpacity(0.02),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: AppColors.primary.withOpacity(0.2),
+                    width: 1.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildConfirmDetailRow('Nom', _nameController.text),
+                    const SizedBox(height: 12),
+                    if (_emailController.text.isNotEmpty) ...[
+                      _buildConfirmDetailRow('Email', _emailController.text),
+                      const SizedBox(height: 12),
+                    ],
+                    _buildConfirmDetailRow('Téléphone', _phoneController.text),
+                    const SizedBox(height: 12),
+                    _buildConfirmDetailRow('Adresse', _addressController.text),
+                    Divider(color: Colors.grey[300], height: 24),
+                    _buildConfirmDetailRow(
+                      'Articles',
+                      '${widget.cartItems.length}',
+                      isHighlight: true,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildConfirmDetailRow(
+                      'Livraison',
+                      widget.deliveryFee > 0
+                          ? '${widget.deliveryFee.toStringAsFixed(2)} DT'
+                          : 'Gratuite',
+                      isDelivery: true,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildConfirmDetailRow(
+                      'Montant Total',
+                      '${(widget.totalAmount+widget.deliveryFee).toStringAsFixed(2)} DT',
+                      isTotal: true,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Annuler'),
+            child: Text(
+              'Annuler',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              _createOrder();
-            },
+              final deliveryFee = (widget.company?['deliveryFee'] ?? 0.0) as num;
+              _createOrder(widget.deliveryFee);
+              },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            child: const Text(
-              'Confirmer',
-              style: TextStyle(color: Colors.white),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check, size: 20),
+                SizedBox(width: 8),
+                Text('Confirmer'),
+              ],
             ),
           ),
         ],
@@ -161,15 +323,21 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
     );
   }
 
-  Widget _buildDetailRow(String label, String value, {bool isTotal = false}) {
+  Widget _buildConfirmDetailRow(
+      String label,
+      String value, {
+        bool isTotal = false,
+        bool isHighlight = false,
+        bool isDelivery = false,
+      }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
           style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey[600],
+            fontSize: 14,
+            color: Colors.grey[700],
             fontWeight: FontWeight.w500,
           ),
         ),
@@ -178,9 +346,15 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
             value,
             textAlign: TextAlign.end,
             style: TextStyle(
-              fontSize: isTotal ? 14 : 13,
-              fontWeight: isTotal ? FontWeight.w700 : FontWeight.w600,
-              color: isTotal ? AppColors.primary : Colors.grey[800],
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal || isHighlight ? FontWeight.w700 : FontWeight.w600,
+              color: isDelivery && value == 'Gratuite'
+                  ? Colors.green
+                  : isTotal
+                  ? AppColors.primary
+                  : isHighlight
+                  ? AppColors.primary.withOpacity(0.8)
+                  : Colors.grey[800],
             ),
           ),
         ),
@@ -188,39 +362,63 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
     );
   }
 
-  Future<void> _createOrder() async {
+  Future<void> _createOrder(double deliveryFee) async {
     setState(() => _isSubmitting = true);
 
     try {
-      // Show loading dialog
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 16),
-              Text('Création de la commande...'),
-            ],
+        builder: (context) => WillPopScope(
+          onWillPop: () async => false,
+          child: AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: CircularProgressIndicator(
+                    color: AppColors.primary,
+                    strokeWidth: 3,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Création de la commande...',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Veuillez patienter',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                ),
+              ],
+            ),
           ),
         ),
       );
 
       final DateTime now = DateTime.now();
-      final deliveryFee = 0.0;
-      final finalTotal = widget.totalAmount + deliveryFee;
+      final finalTotal = widget.totalAmount + widget.deliveryFee;
       final totalProducts = widget.cartItems.length;
       final totalQuantity = widget.cartItems.fold<int>(
         0,
             (sum, item) => sum + (item['quantity'] as int),
       );
 
-      final firstProduct =
-      widget.cartItems.first['product'] as Map<String, dynamic>;
-      final companyId = firstProduct['companyId'] ?? 1;
+      int companyId = 1;
+      if (widget.cartItems.isNotEmpty) {
+        final firstItem = widget.cartItems.first;
+        if (firstItem.containsKey('companyId')) {
+          companyId = firstItem['companyId'];
+        }
+      }
 
-      // Create order
       final orderData = {
         'userId': widget.userId,
         'companyId': companyId,
@@ -228,93 +426,176 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
         'customerEmail': _emailController.text,
         'customerAddress': _addressController.text,
         'customerPhone': _phoneController.text,
-        'orderNotes': '',
+        'orderNotes': _notesController.text,
         'totalProducts': totalProducts,
         'quantity': totalQuantity,
         'discount': 0,
-        'totalAmount': finalTotal,
+        'totalAmount': widget.totalAmount,
+        'deliveryFee': deliveryFee,
         'orderStatus': 'PENDING',
-        'orderDate': now.toIso8601String(),
-        'shippedDate': now.toIso8601String(),
-        'createdAt': now.toIso8601String(),
-        'lastUpdated': now.toIso8601String(),
         'orderItemIds': [],
+        'latitude': _selectedLocation?.latitude,
+        'longitude': _selectedLocation?.longitude,
       };
 
       final createdOrder = await _orderService.createOrder(orderData);
       final orderId = createdOrder['orderId'];
 
-      // Create order items
       final List<int> orderItemIds = [];
       for (var cartItem in widget.cartItems) {
-        final product = cartItem['product'] as Map<String, dynamic>;
-        final orderItemData = {
-          'orderId': orderId,
-          'productId': product['productId'],
-          'quantity': cartItem['quantity'],
-          'unitPrice': product['productFinalePrice'],
-          'totalPrice':
-          (product['productFinalePrice'] * cartItem['quantity']).toDouble(),
-        };
-        final orderItem =
-        await _orderItemService.createOrderItem(orderItemData);
-        orderItemIds.add(orderItem['orderItemId']);
+        final productId = cartItem['productId'] as int?;
+        final quantity = cartItem['quantity'] as int?;
+
+        if (productId != null && quantity != null) {
+          final unitPrice = (cartItem['unitPrice'] ?? 0.0) as num;
+
+          final orderItemData = {
+            'orderId': orderId,
+            'productId': productId,
+            'quantity': quantity,
+            'unitPrice': unitPrice.toDouble(),
+            'totalPrice': (unitPrice * quantity).toDouble(),
+          };
+
+          final orderItem = await _orderItemService.createOrderItem(orderItemData);
+          orderItemIds.add(orderItem['orderItemId']);
+        }
       }
 
-      // Update order with order item IDs
       if (orderItemIds.isNotEmpty) {
         final updatedOrderData = Map<String, dynamic>.from(orderData);
         updatedOrderData['orderItemIds'] = orderItemIds;
         await _orderService.updateOrder(orderId, updatedOrderData);
       }
 
-      // Close loading dialog
       if (mounted) Navigator.pop(context);
 
-      // Show success dialog
       if (mounted) {
         showDialog(
           context: context,
-          builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            title: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.green),
-                const SizedBox(width: 8),
-                const Text('Commande créée'),
+          barrierDismissible: false,
+          builder: (context) => WillPopScope(
+            onWillPop: () async => false,
+            child: AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.green.withOpacity(0.15),
+                          Colors.green.withOpacity(0.05),
+                        ],
+                      ),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check_circle,
+                      color: Colors.green,
+                      size: 64,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Commande Créée',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Votre commande #$orderId',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey[300]!, width: 1),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Articles:',
+                              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                            ),
+                            Text(
+                              '${widget.cartItems.length}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Total:',
+                              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                            ),
+                            Text(
+                              '${finalTotal.toStringAsFixed(2)} DT',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+              actions: [
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).popUntil((route) => route.isFirst);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('Retour à l\'accueil'),
+                  ),
+                ),
               ],
             ),
-            content: Text(
-              'Votre commande #$orderId a été créée avec succès!\n\nTotal: ${finalTotal.toStringAsFixed(2)} DT',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context); // Close success dialog
-                  Navigator.pop(context); // Go back to cart
-                  Navigator.pop(context); // Go back to home
-                },
-                child: const Text('Continuer les achats'),
-              ),
-            ],
           ),
         );
       }
 
       setState(() => _isSubmitting = false);
     } catch (e) {
-      // Close loading dialog if open
       if (mounted) Navigator.pop(context);
-
       setState(() => _isSubmitting = false);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Erreur lors de la création de la commande: $e'),
+            content: Text('Erreur: $e'),
             backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
@@ -334,6 +615,25 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
+        leading: Container(
+          margin: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                color: Colors.black87, size: 20),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -341,150 +641,214 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
         physics: const BouncingScrollPhysics(),
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Order Summary Card
-              _buildOrderSummaryCard(),
-              const SizedBox(height: 24),
-
-              // Form Section
-              const Text(
-                'Vos Informations',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Name Field
-              _buildFormField(
-                controller: _nameController,
-                label: 'Nom Complet',
-                icon: Icons.person_outline,
-                hint: 'Votre nom complet',
-              ),
-              const SizedBox(height: 16),
-
-              // Email Field
-              _buildFormField(
-                controller: _emailController,
-                label: 'Email',
-                icon: Icons.email_outlined,
-                hint: 'votre.email@example.com',
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 16),
-
-              // Phone Field
-              _buildFormField(
-                controller: _phoneController,
-                label: 'Téléphone',
-                icon: Icons.phone_outlined,
-                hint: '+216 XX XXX XXX',
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 16),
-
-              // Address Field
-              _buildFormField(
-                controller: _addressController,
-                label: 'Adresse de Livraison',
-                icon: Icons.location_on_outlined,
-                hint: 'Votre adresse complète',
-                maxLines: 3,
-              ),
-              const SizedBox(height: 32),
-
-              // Submit Button
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submitOrder,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    elevation: 2,
+          child: Form(
+            key: _formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (widget.companyName != null) ...[
+                  _buildCompanyCard(),
+                  const SizedBox(height: 24),
+                ],
+                _buildOrderSummaryCard(),
+                const SizedBox(height: 24),
+                _buildItemsSection(),
+                const SizedBox(height: 28),
+                const Text(
+                  'Vos Informations',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: -0.3,
                   ),
-                  child: _isSubmitting
-                      ? const SizedBox(
-                    height: 24,
-                    width: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(
-                        Colors.white,
+                ),
+                const SizedBox(height: 16),
+                _buildModernFormField(
+                  controller: _nameController,
+                  label: 'Nom Complet',
+                  icon: Icons.person_outline,
+                  hint: 'Votre nom complet',
+                  validator: _validateName,
+                ),
+                const SizedBox(height: 18),
+                _buildModernFormField(
+                  controller: _emailController,
+                  label: 'Email (Optionnel)',
+                  icon: Icons.email_outlined,
+                  hint: 'votre.email@example.com',
+                  keyboardType: TextInputType.emailAddress,
+                  validator: _validateEmail,
+                ),
+                const SizedBox(height: 18),
+                _buildModernFormField(
+                  controller: _phoneController,
+                  label: 'Téléphone',
+                  icon: Icons.phone_outlined,
+                  hint: '12345678',
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  validator: _validatePhone,
+                  maxLength: 8,
+                ),
+                const SizedBox(height: 18),
+                _buildAddressFieldWithMap(),
+                const SizedBox(height: 18),
+                _buildModernFormField(
+                  controller: _notesController,
+                  label: 'Notes (Optionnel)',
+                  icon: Icons.note_outlined,
+                  hint: 'Instructions de livraison...',
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting ? null : _submitOrder,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
                       ),
+                      elevation: 3,
+                      shadowColor: AppColors.primary.withOpacity(0.5),
                     ),
-                  )
-                      : const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Passer la Commande',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                    child: _isSubmitting
+                        ? SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor: AlwaysStoppedAnimation(
+                          Colors.white.withOpacity(0.9),
                         ),
                       ),
-                      SizedBox(width: 8),
-                      Icon(Icons.arrow_forward,
-                          color: Colors.white),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Back Button
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: OutlinedButton(
-                  onPressed: _isSubmitting
-                      ? null
-                      : () => Navigator.pop(context),
-                  style: OutlinedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    side: const BorderSide(
-                      color: AppColors.primary,
-                      width: 2,
-                    ),
-                  ),
-                  child: const Text(
-                    'Retour au Panier',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
+                    )
+                        : const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.check_circle_outline,
+                            color: Colors.white, size: 22),
+                        SizedBox(width: 10),
+                        Text(
+                          'Passer la Commande',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: OutlinedButton(
+                    onPressed: _isSubmitting ? null : () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      side: BorderSide(color: Colors.grey[300]!, width: 2),
+                    ),
+                    child: Text(
+                      'Retour au Panier',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[700],
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildOrderSummaryCard() {
+  Widget _buildCompanyCard() {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withOpacity(0.1),
+            AppColors.primary.withOpacity(0.05),
+          ],
+        ),
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppColors.primary.withOpacity(0.2),
+          width: 1.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.store_outlined,
+              color: AppColors.primary,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Vendeur',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.companyName!,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrderSummaryCard() {
+    final finalTotal = widget.totalAmount + widget.deliveryFee;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
+            blurRadius: 15,
             offset: const Offset(0, 4),
           ),
         ],
@@ -494,76 +858,676 @@ class _CustomerOrderPageState extends State<CustomerOrderPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Articles: ${widget.cartItems.length}',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.grey,
-                ),
+              const Text(
+                'Résumé de la Commande',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
-              Text(
-                '${widget.totalAmount.toStringAsFixed(2)} DT',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '${widget.cartItems.length} article${widget.cartItems.length != 1 ? 's' : ''}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.primary,
+                  ),
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+          Divider(color: Colors.grey[200]),
+          const SizedBox(height: 12),
+          _buildSummaryRow('Sous-total', '${widget.totalAmount.toStringAsFixed(2)} DT'),
+          const SizedBox(height: 12),
+          _buildSummaryRow(
+            'Livraison',
+            widget.deliveryFee > 0
+                ? '${widget.deliveryFee.toStringAsFixed(2)} DT'
+                : 'Gratuite',
+            isDelivery: true,
+          ),
+          const SizedBox(height: 16),
+          Divider(color: Colors.grey[200]),
+          const SizedBox(height: 12),
+          _buildSummaryRow(
+            'Total',
+            '${finalTotal.toStringAsFixed(2)} DT',
+            isTotal: true,
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFormField({
+  Widget _buildSummaryRow(String label, String value,
+      {bool isDelivery = false, bool isTotal = false}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: isTotal ? 16 : 14,
+            fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+            color: isTotal ? Colors.grey[800] : Colors.grey[600],
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: isTotal ? 18 : 14,
+            fontWeight: isTotal ? FontWeight.bold : FontWeight.w600,
+            color: isDelivery && value == 'Gratuite'
+                ? Colors.green
+                : isTotal
+                ? AppColors.primary
+                : Colors.grey[800],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildItemsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Articles de la Commande',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            letterSpacing: -0.3,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: widget.cartItems.length,
+            separatorBuilder: (context, index) =>
+                Divider(color: Colors.grey[200], height: 1),
+            itemBuilder: (context, index) {
+              final item = widget.cartItems[index];
+              return _buildOrderItemCard(item);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOrderItemCard(Map<String, dynamic> item) {
+    final productId = item['productId'] as int?;
+    final productName = item['productName'] ?? 'Produit';
+    final quantity = item['quantity'] ?? 1;
+    final priceValue = item['productFinalePrice'] ?? item['productPrice'] ?? 0.0;
+    final price = (priceValue is int) ? priceValue.toDouble() : (priceValue as double);
+    final originalPriceValue = item['productPrice'] ?? price;
+    final originalPrice = (originalPriceValue is int) ? originalPriceValue.toDouble() : (originalPriceValue as double);
+    final itemTotal = price * quantity;
+    final hasDiscount = price < originalPrice;
+    final productImage = productId != null ? _productImages[productId] : null;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.primary.withOpacity(0.1),
+                    Colors.grey[100]!,
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: productImage != null
+                  ? Image.memory(
+                productImage,
+                fit: BoxFit.cover,
+              )
+                  : Icon(
+                Icons.shopping_bag_outlined,
+                color: Colors.grey[400],
+                size: 40,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  productName,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    height: 1.3,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hasDiscount) ...[
+                        Text(
+                          '${originalPrice.toStringAsFixed(2)} DT',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[400],
+                            decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        '${price.toStringAsFixed(2)} DT',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (hasDiscount) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green[600],
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: const Text(
+                            'PROMO',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        'Qty: $quantity',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[700],
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${itemTotal.toStringAsFixed(2)} DT',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddressFieldWithMap() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 15,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.location_on,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Adresse de Livraison',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                    Text(
+                      'Sélectionnez sur la carte ou saisissez manuellement',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _addressController,
+                  maxLines: 3,
+                  validator: _validateAddress,
+                  decoration: InputDecoration(
+                    hintText: 'Votre adresse complète',
+                    hintStyle: TextStyle(
+                      color: Colors.grey[400],
+                      fontSize: 14,
+                    ),
+                    prefixIcon: Icon(
+                      Icons.edit_location_alt,
+                      color: AppColors.primary,
+                      size: 22,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                        color: Colors.grey[300]!,
+                        width: 1.5,
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                        color: Colors.grey[300]!,
+                        width: 1.5,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
+                    ),
+                    errorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                        color: Colors.red[400]!,
+                        width: 1.5,
+                      ),
+                    ),
+                    focusedErrorBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                        color: Colors.red[400]!,
+                        width: 2,
+                      ),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 16,
+                    ),
+                  ),
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[800],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                height: 60,
+                width: 60,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppColors.primary,
+                      AppColors.primary.withOpacity(0.8),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => _openLocationPicker(),
+                    child: const Icon(
+                      Icons.map_rounded,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blue[200]!),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.blue[600], size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Problème avec la carte ? Entrez votre adresse manuellement',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.blue[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_selectedLocation != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green[200]!),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green[600], size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Localisation sélectionnée: ${_selectedLocation!.latitude.toStringAsFixed(4)}, ${_selectedLocation!.longitude.toStringAsFixed(4)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.green[700],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _openLocationPicker() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocationPickerWidget(
+          onLocationSelected: (lat, lng) async {
+            setState(() {
+              _selectedLocation = LatLng(lat, lng);
+            });
+            await _updateAddressFromCoordinates(lat, lng);
+          },
+          initialLocation: _selectedLocation,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _updateAddressFromCoordinates(double lat, double lng) async {
+    try {
+      final address = await _getAddressFromCoordinates(lat, lng);
+      if (address.isNotEmpty) {
+        setState(() {
+          _addressController.text = address;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error getting address: $e');
+    }
+  }
+
+  Future<String> _getAddressFromCoordinates(double lat, double lng) async {
+    try {
+      final url = 'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&zoom=18&addressdetails=1&accept-language=fr';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'User-Agent': 'Jibli-App/1.0'},
+      );
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        debugPrint('Geocoding response: $data');
+        
+        final address = data['address'] as Map<String, dynamic>?;
+        
+        if (address != null) {
+          debugPrint('Address components: $address');
+          List<String> addressParts = [];
+          
+          // Street with house number
+          String? street;
+          if (address['house_number'] != null && address['road'] != null) {
+            street = '${address['house_number']} ${address['road']}';
+          } else if (address['road'] != null) {
+            street = address['road'];
+          } else if (address['pedestrian'] != null) {
+            street = address['pedestrian'];
+          }
+          if (street != null) addressParts.add(street);
+          
+          // Area/District
+          String? area = address['suburb'] ?? 
+                        address['neighbourhood'] ?? 
+                        address['quarter'] ?? 
+                        address['district'];
+          if (area != null) addressParts.add(area);
+          
+          // City
+          String? city = address['city'] ?? 
+                        address['town'] ?? 
+                        address['village'] ?? 
+                        address['municipality'];
+          if (city != null) addressParts.add(city);
+          
+          if (addressParts.isNotEmpty) {
+            final result = addressParts.join(', ');
+            debugPrint('Formatted address: $result');
+            return result;
+          }
+        }
+        
+        // Fallback to display_name but clean it up
+        String displayName = data['display_name'] ?? 'Adresse non trouvée';
+        // Remove coordinates and country code from display name
+        displayName = displayName.split(',').take(3).join(', ');
+        return displayName;
+      }
+    } catch (e) {
+      debugPrint('Reverse geocoding error: $e');
+    }
+    return 'Coordonnées: ${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)}';
+  }
+
+  Widget _buildModernFormField({
     required TextEditingController controller,
     required String label,
     required IconData icon,
     required String hint,
     TextInputType? keyboardType,
     int maxLines = 1,
+    int? maxLength,
+    List<TextInputFormatter>? inputFormatters,
+    String? Function(String?)? validator,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey,
-          ),
+        Row(
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+                letterSpacing: -0.2,
+              ),
+            ),
+            if (!label.contains('Optionnel'))
+              Text(
+                ' *',
+                style: TextStyle(color: Colors.red[500], fontSize: 16),
+              ),
+          ],
         ),
-        const SizedBox(height: 8),
-        TextField(
+        const SizedBox(height: 10),
+        TextFormField(
           controller: controller,
           keyboardType: keyboardType,
           maxLines: maxLines,
+          maxLength: maxLength,
+          inputFormatters: inputFormatters,
+          validator: validator,
           decoration: InputDecoration(
             hintText: hint,
-            prefixIcon: Icon(icon, color: AppColors.primary, size: 22),
+            hintStyle: TextStyle(
+              color: Colors.grey[400],
+              fontSize: 14,
+            ),
+            prefixIcon: Icon(
+              icon,
+              color: AppColors.primary,
+              size: 22,
+            ),
+            errorText: null,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: Colors.grey[300]!,
+                width: 1.5,
+              ),
             ),
             enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: Colors.grey[300]!,
+                width: 1.5,
+              ),
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               borderSide: const BorderSide(
                 color: AppColors.primary,
                 width: 2,
               ),
             ),
+            errorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: Colors.red[400]!,
+                width: 1.5,
+              ),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide(
+                color: Colors.red[400]!,
+                width: 2,
+              ),
+            ),
             filled: true,
-            fillColor: Colors.grey[50],
+            fillColor: Colors.white,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 16,
-              vertical: 14,
+              vertical: 16,
             ),
+            counterText: '',
+          ),
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[800],
+            fontWeight: FontWeight.w500,
           ),
         ),
       ],

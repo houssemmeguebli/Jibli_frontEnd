@@ -4,6 +4,8 @@ import '../../../../core/services/pagination_service.dart';
 import '../../../../core/services/order_service.dart';
 import '../../../../core/services/company_service.dart';
 import '../../../../core/services/user_service.dart';
+import '../../../../core/services/order_item_service.dart';
+import '../../../../core/services/product_service.dart';
 import '../../../owner/presentation/pages/owner_order_details_page.dart';
 
 class AdminOrdersPage extends StatefulWidget {
@@ -16,7 +18,9 @@ class AdminOrdersPage extends StatefulWidget {
 class _AdminOrdersPageState extends State<AdminOrdersPage> {
   final OrderService _orderService = OrderService();
   final CompanyService _companyService = CompanyService();
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
+  final OrderItemService _orderItemService = OrderItemService();
+  final ProductService _productService = ProductService();
   final PaginationService _paginationService = PaginationService();
   PaginationState _paginationState = PaginationState(currentPage: 1, totalItems: 0, itemsPerPage: 12);
 
@@ -176,16 +180,59 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
   }
 
-  void _showOrderDetails(Map<String, dynamic> order) {
-    showDialog(
-      context: context,
-      builder: (context) => OwnerOrderDetailsDialog(
-        order: order,
-        onOrderUpdated: () {
-          _loadData();
-        },
-      ),
-    );
+  Future<void> _showOrderDetails(Map<String, dynamic> order) async {
+    final enrichedOrder = await _enrichOrderData(order);
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => OwnerOrderDetailsDialog(
+          order: enrichedOrder,
+          onOrderUpdated: () {
+            _loadData();
+          },
+        ),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _enrichOrderData(Map<String, dynamic> order) async {
+    try {
+      final orderId = order['orderId'];
+      final customerId = order['userId'];
+      
+      // Get customer info
+      if (customerId != null) {
+        final customer = await _userService.getUserById(customerId);
+        if (customer != null) {
+          order['customerName'] = customer['fullName'] ?? 'Client';
+          order['customerEmail'] = customer['email'] ?? '';
+          order['customerPhone'] = customer['phoneNumber'] ?? '';
+        }
+      }
+      
+      // Get order items with product details
+      if (orderId != null) {
+        final orderItems = await _orderItemService.getOrderItemsByOrder(orderId);
+        
+        // Get product details for each item
+        for (var item in orderItems) {
+          final productId = item['productId'];
+          if (productId != null) {
+            final product = await _productService.getProductById(productId);
+            if (product != null) {
+              item['productDetails'] = product;
+            }
+          }
+        }
+        
+        order['orderItems'] = orderItems;
+      }
+      
+      return order;
+    } catch (e) {
+      debugPrint('Error enriching order data: $e');
+      return order;
+    }
   }
 
   @override

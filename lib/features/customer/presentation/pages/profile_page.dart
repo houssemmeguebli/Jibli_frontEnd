@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/user_service.dart';
+import '../../../../core/services/auth_service.dart';
+import '../../../../features/auth/pages/login_page.dart';
 import '../widgets/address_card.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -11,10 +14,11 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
+  final AuthService _authService = AuthService();
   Map<String, dynamic>? _userData;
   bool _isLoading = true;
-  final int _currentUserId = 1; // Mock user ID
+  int? _currentUserId;
 
   @override
   void initState() {
@@ -23,12 +27,28 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _loadUserProfile() async {
+    // Initialize skeleton data
+    setState(() {
+      _userData = {
+        'fullName': 'Nom skeleton',
+        'email': 'email@skeleton.com',
+        'phone': '12345678',
+        'userStatus': 'Actif',
+        'address': 'Adresse skeleton',
+      };
+    });
+
     try {
-      final user = await _userService.getUserById(_currentUserId);
-      setState(() {
-        _userData = user;
-        _isLoading = false;
-      });
+      _currentUserId = await _authService.getUserId();
+      if (_currentUserId != null) {
+        final user = await _userService.getUserById(_currentUserId!);
+        setState(() {
+          _userData = user;
+          _isLoading = false;
+        });
+      } else {
+        throw Exception('Utilisateur non connecté');
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -43,62 +63,91 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    if (_userData == null && !_isLoading) {
       return Scaffold(
         backgroundColor: AppColors.background,
-        body: const Center(child: CircularProgressIndicator()),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: AppColors.danger),
+              const SizedBox(height: 16),
+              Text(
+                'Erreur de chargement du profil',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Impossible de charger les données utilisateur',
+                style: TextStyle(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: _loadUserProfile,
+                child: const Text('Réessayer'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: NestedScrollView(
-        headerSliverBuilder: (context, innerBoxIsScrolled) {
-          return [
-            SliverAppBar(
-              title: Text(
-                'Mon Profil',
-                style: TextStyle(
-                  color: AppColors.textLight,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              backgroundColor: AppColors.primary,
-              pinned: true,
-              floating: true,
-              elevation: 0,
-              expandedHeight: 200,
-              flexibleSpace: FlexibleSpaceBar(
-                background: Container(
-                  decoration: const BoxDecoration(
-                    gradient: AppColors.primaryGradient,
+      body: Skeletonizer(
+        enabled: _isLoading,
+        child: NestedScrollView(
+          headerSliverBuilder: (context, innerBoxIsScrolled) {
+            return [
+              SliverAppBar(
+                title: Text(
+                  'Mon Profil',
+                  style: TextStyle(
+                    color: AppColors.textLight,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          _buildProfileHeader(),
-                          const SizedBox(height: 20),
-                        ],
+                ),
+                backgroundColor: AppColors.primary,
+                pinned: true,
+                floating: true,
+                elevation: 0,
+                expandedHeight: 200,
+                flexibleSpace: FlexibleSpaceBar(
+                  background: Container(
+                    decoration: const BoxDecoration(
+                      gradient: AppColors.primaryGradient,
+                    ),
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            _buildProfileHeader(),
+                            const SizedBox(height: 20),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
+            ];
+          },
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildStatsSection(),
+                const SizedBox(height: 24),
+                _buildMenuSection(context),
+              ],
             ),
-          ];
-        },
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildStatsSection(),
-              const SizedBox(height: 24),
-              _buildMenuSection(context),
-            ],
           ),
         ),
       ),
@@ -119,8 +168,8 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _buildProfileHeader() {
     final String fullName = _userData?['fullName'] ?? 'Jean Dupont';
-    final String email = _userData?['email'] ;
-    final String phone = formatPhone(_userData?['phone']) ?? _userData?['email'];
+    final String email = _userData?['email'] ?? '';
+    final String phone = formatPhone(_userData?['phone']) ?? _userData?['email'] ?? '';
     final String initials = fullName
         .split(' ')
         .map((name) => name.isNotEmpty ? name[0] : '')
@@ -178,7 +227,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  _userData?['userStatus'],
+                  _userData?['userStatus'] ?? 'Actif',
                   style: TextStyle(
                     color: AppColors.textLight,
                     fontSize: 12,
@@ -195,7 +244,7 @@ class _ProfilePageState extends State<ProfilePage> {
             borderRadius: BorderRadius.circular(12),
           ),
           child: IconButton(
-            onPressed: () => _showEditProfileDialog(),
+            onPressed: _isLoading ? null : () => _showEditProfileDialog(),
             icon: Icon(
               Icons.edit_rounded,
               color: AppColors.textLight,
@@ -320,22 +369,10 @@ class _ProfilePageState extends State<ProfilePage> {
           onTap: () => _showEditProfileDialog(),
         ),
         _buildMenuItem(
-          icon: Icons.payment_outlined,
-          title: 'Moyens de paiement',
-          subtitle: 'Cartes et portefeuilles',
-          onTap: () {},
-        ),
-        _buildMenuItem(
-          icon: Icons.notifications_outlined,
-          title: 'Notifications',
-          subtitle: 'Préférences de notification',
-          onTap: () {},
-        ),
-        _buildMenuItem(
-          icon: Icons.language_outlined,
-          title: 'Langue',
-          subtitle: 'Français',
-          onTap: () {},
+          icon: Icons.lock_outline,
+          title: 'Changer le mot de passe',
+          subtitle: 'Modifier votre mot de passe',
+          onTap: () => _showChangePasswordDialog(),
         ),
         const SizedBox(height: 24),
         Text(
@@ -498,6 +535,13 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           ElevatedButton(
             onPressed: () async {
+              if (_userData == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Erreur: données utilisateur non disponibles')),
+                );
+                return;
+              }
+              
               final updatedData = {
                 ..._userData!,
                 'fullName': nameController.text,
@@ -506,7 +550,13 @@ class _ProfilePageState extends State<ProfilePage> {
               };
               
               try {
-                final result = await _userService.updateUser(_currentUserId, updatedData);
+                if (_currentUserId == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Erreur: utilisateur non connecté')),
+                  );
+                  return;
+                }
+                final result = await _userService.updateUser(_currentUserId!, updatedData);
                 if (result != null) {
                   setState(() {
                     _userData = result;
@@ -681,13 +731,26 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           ElevatedButton(
             onPressed: () async {
+              if (_userData == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Erreur: données utilisateur non disponibles')),
+                );
+                return;
+              }
+              
               final updatedData = {
                 ..._userData!,
                 'address': addressController.text,
               };
               
               try {
-                final result = await _userService.updateUser(_currentUserId, updatedData);
+                if (_currentUserId == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Erreur: utilisateur non connecté')),
+                  );
+                  return;
+                }
+                final result = await _userService.updateUser(_currentUserId!, updatedData);
                 if (result != null) {
                   setState(() {
                     _userData = result;
@@ -737,9 +800,9 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Text('Annuler', style: TextStyle(color: AppColors.textSecondary)),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // Handle logout
+              await _handleLogout();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.danger,
@@ -751,5 +814,147 @@ class _ProfilePageState extends State<ProfilePage> {
         ],
       ),
     );
+  }
+
+  void _showChangePasswordDialog() {
+    final currentPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool isLoading = false;
+    bool showCurrentPassword = false;
+    bool showNewPassword = false;
+    bool showConfirmPassword = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text(
+            'Changer le mot de passe',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: currentPasswordController,
+                  obscureText: !showCurrentPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Mot de passe actuel',
+                    prefixIcon: Icon(Icons.lock_outline, color: AppColors.primary),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showCurrentPassword ? Icons.visibility : Icons.visibility_off,
+                        color: AppColors.textSecondary,
+                      ),
+                      onPressed: () => setState(() => showCurrentPassword = !showCurrentPassword),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: newPasswordController,
+                  obscureText: !showNewPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Nouveau mot de passe',
+                    prefixIcon: Icon(Icons.lock_outline, color: AppColors.primary),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showNewPassword ? Icons.visibility : Icons.visibility_off,
+                        color: AppColors.textSecondary,
+                      ),
+                      onPressed: () => setState(() => showNewPassword = !showNewPassword),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: confirmPasswordController,
+                  obscureText: !showConfirmPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Confirmer le mot de passe',
+                    prefixIcon: Icon(Icons.lock_outline, color: AppColors.primary),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                        color: AppColors.textSecondary,
+                      ),
+                      onPressed: () => setState(() => showConfirmPassword = !showConfirmPassword),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.pop(context),
+              child: Text('Annuler', style: TextStyle(color: AppColors.textSecondary)),
+            ),
+            ElevatedButton(
+              onPressed: isLoading ? null : () async {
+                setState(() => isLoading = true);
+                try {
+                  await _authService.changePassword(
+                    currentPassword: currentPasswordController.text,
+                    newPassword: newPasswordController.text,
+                    confirmPassword: confirmPasswordController.text,
+                  );
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(content: Text('Mot de passe changé avec succès')),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(content: Text('Erreur: ${e.toString().replaceAll('Exception: Change password error: Exception: ', '')}')),
+                  );
+                } finally {
+                  setState(() => isLoading = false);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: isLoading 
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text('Changer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleLogout() async {
+    try {
+      await _authService.logout();
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => LoginPage()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur de déconnexion: $e')),
+        );
+      }
+    }
   }
 }

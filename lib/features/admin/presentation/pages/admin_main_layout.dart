@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:frontend/features/admin/presentation/pages/admin_notifications_page.dart';
 import '../../../../core/theme/theme.dart';
+import '../../../../core/services/auth_service.dart';
+import '../../../auth/pages/login_page.dart';
 import 'admin_dashboard_page.dart';
 import 'admin_users_page.dart';
 import 'admin_companies_page.dart';
@@ -18,6 +21,7 @@ class AdminMainLayout extends StatefulWidget {
 class _AdminMainLayoutState extends State<AdminMainLayout> {
   int _selectedIndex = 0;
   bool _sidebarCollapsed = false;
+  final AuthService _authService = AuthService();
 
   final List<Widget> _pages = [
     const AdminDashboardPage(),
@@ -25,6 +29,7 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
     const AdminCompaniesPage(),
     const AdminProductsPage(),
     const AdminOrdersPage(),
+    const AdminBroadcastPage(),
     const AdminReviewsPage(),
   ];
 
@@ -34,8 +39,28 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
     (icon: Icons.business_rounded, label: 'Entreprises', route: 'companies'),
     (icon: Icons.inventory_2_rounded, label: 'Produits', route: 'products'),
     (icon: Icons.receipt_long_rounded, label: 'Commandes', route: 'orders'),
+    (icon: Icons.notification_add_outlined, label: 'Annonces', route: 'annonces'),
     (icon: Icons.rate_review_rounded, label: 'Avis', route: 'reviews'),
   ];
+
+  Future<void> _handleLogout() async {
+    try {
+      await _authService.logout();
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => LoginPage()),
+              (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur de déconnexion: $e')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -143,6 +168,13 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
         elevation: 1,
         centerTitle: false,
         title: const Text('Admin Panel'),
+        actions: [
+          IconButton(
+            onPressed: _handleLogout,
+            icon: const Icon(Icons.logout_rounded),
+            tooltip: 'Déconnexion',
+          ),
+        ],
       ),
       body: _pages[_selectedIndex],
       bottomNavigationBar: _buildBottomNavigation(),
@@ -562,7 +594,7 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => Navigator.of(context).pushReplacementNamed('/login'),
+                  onTap: _handleLogout,
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: const EdgeInsets.all(8),
@@ -578,7 +610,7 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
           : Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: () => Navigator.of(context).pushReplacementNamed('/login'),
+                onTap: _handleLogout,
                 borderRadius: BorderRadius.circular(12),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -622,7 +654,7 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => Navigator.of(context).pushReplacementNamed('/login'),
+          onTap: _handleLogout,
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.all(8),
@@ -734,6 +766,19 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 color: _selectedIndex == 5
+                    ? AppColors.primary.withOpacity(0.1)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.notification_add_outlined, size: 24),
+            ),
+            label: 'Annonces',
+          ),
+          BottomNavigationBarItem(
+            icon: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _selectedIndex == 6
                     ? AppColors.primary.withOpacity(0.1)
                     : Colors.transparent,
                 borderRadius: BorderRadius.circular(10),

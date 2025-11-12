@@ -1,21 +1,41 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../utils/constants.dart';
+import 'auth_service.dart';
 
 class UserCompanyService {
+  static const String baseUrl = ApiConstants.baseUrl;
+  final AuthService _authService = AuthService();
 
-  static const String baseUrl = 'http://192.168.1.216:8080';
+  Future<Map<String, String>> _getHeaders() async {
+    final token = await _authService.getAccessToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
 
-  Future<List<Map<String, dynamic>>> getAllUserCompanies() async {
-    final response = await http.get(Uri.parse('$baseUrl/user-companies'));
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      if (decoded is List) {
-        return List<Map<String, dynamic>>.from(decoded);
-      } else {
-        return [Map<String, dynamic>.from(decoded)];
+  Future<List<Map<String, dynamic>>> getAllUserCompanies({int retry = 0}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/user-companies'),
+        headers: await _getHeaders(),
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is List) {
+          return List<Map<String, dynamic>>.from(decoded);
+        } else {
+          return [Map<String, dynamic>.from(decoded)];
+        }
       }
-    } else {
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getAllUserCompanies(retry: 1);
+      }
       throw Exception('Failed to load user companies: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 
@@ -30,16 +50,23 @@ class UserCompanyService {
     }
   }
 
-  Future<Map<String, dynamic>> createUserCompany(Map<String, dynamic> userCompany) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/user-companies'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(userCompany),
-    );
-    if (response.statusCode == 201) {
-      return Map<String, dynamic>.from(jsonDecode(response.body));
-    } else {
+  Future<Map<String, dynamic>> createUserCompany(Map<String, dynamic> userCompany, {int retry = 0}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/user-companies'),
+        headers: await _getHeaders(),
+        body: jsonEncode(userCompany),
+      );
+      if (response.statusCode == 201) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return createUserCompany(userCompany, retry: 1);
+      }
       throw Exception('Failed to create user company: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
     }
   }
 

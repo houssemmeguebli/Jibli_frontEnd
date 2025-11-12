@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/user_service.dart';
+import '../../../../core/services/auth_service.dart';
+import '../../../auth/pages/login_page.dart';
 
 class DeliveryProfilePage extends StatefulWidget {
   const DeliveryProfilePage({super.key});
@@ -10,13 +12,14 @@ class DeliveryProfilePage extends StatefulWidget {
 }
 
 class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTickerProviderStateMixin {
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
+  final AuthService _authService = AuthService();
   bool _isAvailable = true;
   bool _isLoading = true;
   bool _isEditing = false;
   bool _isUpdating = false;
   Map<String, dynamic>? _deliveryData;
-  static const int connectedUserId = 1;
+  int? _connectedUserId;
   late AnimationController _animationController;
 
   final _fullNameController = TextEditingController();
@@ -46,7 +49,11 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
 
   Future<void> _loadUserData() async {
     try {
-      final userData = await _userService.getUserById(connectedUserId);
+      _connectedUserId = await _authService.getUserId();
+      if (_connectedUserId == null) {
+        throw Exception('User ID not found');
+      }
+      final userData = await _userService.getUserById(_connectedUserId!);
       setState(() {
         _deliveryData = userData;
         _fullNameController.text = userData?['fullName'] ?? '';
@@ -83,7 +90,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
         'available': _isAvailable,
       };
 
-      await _userService.updateUser(connectedUserId, updatedData);
+      await _userService.updateUser(_connectedUserId!, updatedData);
       await _loadUserData();
 
       setState(() {
@@ -130,7 +137,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
       };
 
       print('DEBUG: Sending complete data: $updatedData');
-      final response = await _userService.updateUser(connectedUserId, updatedData);
+      final response = await _userService.updateUser(_connectedUserId!, updatedData);
       print('DEBUG: Update response: $response');
       print('DEBUG: Response available value: ${response!['available']}');
 
@@ -214,26 +221,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
     final isMobile = screenWidth < 600;
 
     if (_isLoading) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const CircularProgressIndicator(
-                strokeWidth: 3,
-                valueColor: AlwaysStoppedAnimation(AppColors.primary),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text('Chargement du profil...'),
-          ],
-        ),
-      );
+      return _buildSkeletonProfile(isMobile);
     }
 
     if (_deliveryData == null) {
@@ -261,12 +249,6 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(child: _buildHeader(isMobile)),
-        SliverPadding(
-          padding: EdgeInsets.all(isMobile ? 6 : 8),
-          sliver: SliverToBoxAdapter(
-            child: _buildStatsCards(isMobile),
-          ),
-        ),
         SliverPadding(
           padding: EdgeInsets.symmetric(
             horizontal: isMobile ? 12 : 16,
@@ -344,92 +326,6 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
     );
   }
 
-  Widget _buildStatsCards(bool isMobile) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isWeb = screenWidth > 1024;
-    return GridView.count(
-      crossAxisCount: 3, // Always 3 columns
-      crossAxisSpacing: isMobile ? 8 : 12,
-      mainAxisSpacing: isMobile ? 8 : 12,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: isMobile ? 1.1 : isWeb ? 3.5 : 1.5,
-      children: [
-        _buildStatCard(
-          'Note',
-          '4.8/5',
-          Icons.star,
-          Colors.amber,
-        ),
-        _buildStatCard(
-          'Livraisons',
-          '156',
-          Icons.local_shipping,
-          Colors.blue,
-        ),
-        _buildStatCard(
-          'Statut',
-          _isAvailable ? 'Disponible' : 'Indisponible',
-          _isAvailable ? Icons.check_circle : Icons.pause_circle,
-          _isAvailable ? Colors.green : Colors.red,
-        ),
-      ],
-    );
-  }
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [color.withOpacity(0.12), color.withOpacity(0.05)],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withOpacity(0.25), width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.1),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: color, size: 20),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 3),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
   Widget _buildProfileInfoCard(bool isMobile) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -611,7 +507,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
             Icons.security,
             'Sécurité',
             'Changer le mot de passe',
-                () {},
+            () => _showChangePasswordDialog(),
           ),
           Divider(color: Colors.grey.withOpacity(0.2)),
           _buildSettingItem(
@@ -625,9 +521,7 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
             Icons.logout_rounded,
             'Déconnexion',
             'Se déconnecter de l\'application',
-                () {
-              Navigator.of(context).pushReplacementNamed('/login');
-            },
+            _handleLogout,
             isDestructive: true,
           ),
         ],
@@ -771,6 +665,147 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
       ),
     );
   }
+  Future<void> _handleLogout() async {
+    try {
+      await _authService.logout();
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => LoginPage()),
+              (route) => false,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erreur de déconnexion: $e')),
+        );
+      }
+    }
+  }
+  void _showChangePasswordDialog() {
+    final currentPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool isLoading = false;
+    bool showCurrentPassword = false;
+    bool showNewPassword = false;
+    bool showConfirmPassword = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text(
+            'Changer le mot de passe',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: currentPasswordController,
+                  obscureText: !showCurrentPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Mot de passe actuel',
+                    prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primary),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showCurrentPassword ? Icons.visibility : Icons.visibility_off,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () => setState(() => showCurrentPassword = !showCurrentPassword),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: newPasswordController,
+                  obscureText: !showNewPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Nouveau mot de passe',
+                    prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primary),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showNewPassword ? Icons.visibility : Icons.visibility_off,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () => setState(() => showNewPassword = !showNewPassword),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: confirmPasswordController,
+                  obscureText: !showConfirmPassword,
+                  decoration: InputDecoration(
+                    labelText: 'Confirmer le mot de passe',
+                    prefixIcon: const Icon(Icons.lock_outline, color: AppColors.primary),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        showConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () => setState(() => showConfirmPassword = !showConfirmPassword),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: isLoading ? null : () => Navigator.pop(context),
+              child: const Text('Annuler', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              onPressed: isLoading ? null : () async {
+                setState(() => isLoading = true);
+                try {
+                  await _authService.changePassword(
+                    currentPassword: currentPasswordController.text,
+                    newPassword: newPasswordController.text,
+                    confirmPassword: confirmPasswordController.text,
+                  );
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(content: Text('Mot de passe changé avec succès')),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(content: Text('Erreur: ${e.toString().replaceAll('Exception: Change password error: Exception: ', '')}')),
+                  );
+                } finally {
+                  setState(() => isLoading = false);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              child: isLoading 
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Text('Changer'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _formatDate(dynamic date) {
     if (date == null) return 'N/A';
     try {
@@ -814,3 +849,281 @@ class _DeliveryProfilePageState extends State<DeliveryProfilePage> with SingleTi
   }
 
 }
+  Widget _buildSkeletonProfile(bool isMobile) {
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(child: _buildSkeletonHeader(isMobile)),
+        SliverPadding(
+          padding: EdgeInsets.symmetric(
+            horizontal: isMobile ? 12 : 16,
+            vertical: 8,
+          ),
+          sliver: SliverToBoxAdapter(child: _buildSkeletonContent(isMobile)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSkeletonHeader(bool isMobile) {
+    return Container(
+      padding: EdgeInsets.only(
+        top: 60,
+        left: isMobile ? 16 : 24,
+        right: isMobile ? 16 : 24,
+        bottom: 24,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.grey[300],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: Colors.grey[400],
+              borderRadius: BorderRadius.circular(16),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 120,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: 180,
+                  height: 15,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonContent(bool isMobile) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    width: 180,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                  ),
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ...List.generate(5, (index) => 
+                Padding(
+                  padding: EdgeInsets.only(bottom: index < 4 ? 16 : 0),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 80,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[400],
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Container(
+                              width: double.infinity,
+                              height: 15,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[400],
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 100,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(9),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 140,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        width: 120,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    width: 50,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[400],
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 100,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(9),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ...List.generate(4, (index) => 
+                Padding(
+                  padding: EdgeInsets.only(bottom: index < 3 ? 12 : 0),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 120,
+                              height: 16,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[400],
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Container(
+                              width: 160,
+                              height: 13,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[400],
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[400],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }

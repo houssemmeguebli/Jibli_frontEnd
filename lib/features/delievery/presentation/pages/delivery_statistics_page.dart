@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/order_service.dart';
+import '../../../../core/services/auth_service.dart';
 
 class DeliveryStatisticsPage extends StatefulWidget {
   const DeliveryStatisticsPage({super.key});
@@ -13,13 +14,33 @@ class DeliveryStatisticsPage extends StatefulWidget {
 class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
     with TickerProviderStateMixin {
   final OrderService _orderService = OrderService();
+  final AuthService _authService = AuthService();
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
   bool _isLoading = true;
   String _selectedPeriod = 'monthly';
-  final int currentDeliveryId = 3;
+  int? _currentDeliveryId;
+  String _selectedStatusFilter = 'TOUS';
+  String _selectedFeeFilter = 'TOUS';
+  int _currentPage = 1;
+  final int _itemsPerPage = 10;
+
+  final Map<String, List<String>> statusOptionsMap = {
+    'TOUS': [],
+    'EN ATTENTE': ['WAITING'],
+    'ACCEPTÉ': ['ACCEPTED'],
+    'RÉCUPÉRÉ': ['PICKED_UP'],
+    'LIVRÉ': ['DELIVERED'],
+    'REJETÉ': ['REJECTED'],
+  };
+
+  final Map<String, String> feeFilterOptions = {
+    'TOUS': 'Tous',
+    'PAYÉ': 'Payé',
+    'NON_PAYÉ': 'Non payé',
+  };
 
   Map<String, dynamic> _stats = {};
   List<Map<String, dynamic>> _statusData = [];
@@ -50,7 +71,12 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
     try {
       setState(() => _isLoading = true);
 
-      final deliveryOrders = await _orderService.getOrdersByDeliveryId(currentDeliveryId);
+      _currentDeliveryId = await _authService.getUserId();
+      if (_currentDeliveryId == null) {
+        throw Exception('Delivery ID not found');
+      }
+
+      final deliveryOrders = await _orderService.getOrdersByDeliveryId(_currentDeliveryId!);
 
       setState(() {
         _allOrders = deliveryOrders;
@@ -66,6 +92,219 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
         _showErrorSnackBar('Erreur: ${e.toString()}');
       }
     }
+  }
+
+  Widget _buildSkeletonStatistics() {
+    return CustomScrollView(
+      slivers: [
+        _buildSkeletonHeader(),
+        _buildSkeletonStatsCards(),
+        _buildSkeletonChart(),
+        _buildSkeletonOrdersList(),
+        const SliverToBoxAdapter(child: SizedBox(height: 32)),
+      ],
+    );
+  }
+
+  Widget _buildSkeletonHeader() {
+    return SliverToBoxAdapter(
+      child: Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              width: 120,
+              height: 20,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            Container(
+              width: 80,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(18),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonStatsCards() {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      sliver: SliverGrid(
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 1.5,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+        ),
+        delegate: SliverChildBuilderDelegate(
+          (context, index) => Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  width: 60,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  width: 80,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[400],
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          childCount: 4,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonChart() {
+    return SliverToBoxAdapter(
+      child: Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 100,
+              height: 18,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: double.infinity,
+              height: 200,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonOrdersList() {
+    return SliverToBoxAdapter(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 140,
+              height: 18,
+              decoration: BoxDecoration(
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(9),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ...List.generate(3, (index) => 
+              Padding(
+                padding: EdgeInsets.only(bottom: index < 2 ? 12 : 0),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[400],
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 100,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[400],
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Container(
+                            width: 80,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[400],
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 60,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[400],
+                        borderRadius: BorderRadius.circular(7),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _calculateStatistics(
@@ -105,8 +344,9 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
 
     final revenueByPeriod = _calculateRevenueByPeriod(periodOrders);
 
-    final filteredStatusCounts = <String, int>{
+    final allStatusCounts = <String, int>{
       'WAITING': statusCounts['WAITING'] ?? 0,
+      'ACCEPTED': statusCounts['ACCEPTED'] ?? 0,
       'PICKED_UP': statusCounts['PICKED_UP'] ?? 0,
       'DELIVERED': statusCounts['DELIVERED'] ?? 0,
       'REJECTED': statusCounts['REJECTED'] ?? 0,
@@ -126,7 +366,7 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
         'periodLabel': _getPeriodLabel(),
       };
 
-      _statusData = filteredStatusCounts.entries
+      _statusData = allStatusCounts.entries
           .map((e) => {
         'status': e.key,
         'count': e.value,
@@ -134,8 +374,7 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
             ? (e.value / totalDeliveries * 100).round()
             : 0,
       })
-          .toList()
-        ..removeWhere((item) => item['count'] == 0);
+          .toList();
 
       _revenueData = revenueByPeriod.entries
           .map((e) => {
@@ -372,6 +611,7 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
             _buildPeriodSelector(isMobile),
             _buildStatsCards(isMobile),
             _buildChartsSection(isMobile),
+            _buildDeliveryFeesSection(isMobile),
             _buildRecentDeliveriesSection(isMobile),
             const SliverToBoxAdapter(child: SizedBox(height: 32)),
           ],
@@ -381,33 +621,7 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(32),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-              strokeWidth: 3,
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            'Chargement des statistiques...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
-    );
+    return _buildSkeletonStatistics();
   }
 
   Widget _buildHeader(bool isMobile) {
@@ -562,6 +776,8 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
   }
 
   Widget _buildStatsCards(bool isMobile) {
+    final totalDeliveryFees = _stats['totalEarnings'] ?? 0.0;
+
     final stats = [
       {
         'title': 'Total',
@@ -582,8 +798,8 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
         'color': Colors.red,
       },
       {
-        'title': 'Gains',
-        'value': '${(_stats['totalEarnings'] ?? 0.0).toStringAsFixed(2)} DT',
+        'title': 'Frais de Livraison',
+        'value': '${(totalDeliveryFees as double).toStringAsFixed(2)} DT',
         'icon': Icons.monetization_on_rounded,
         'color': Colors.purple,
       },
@@ -965,23 +1181,29 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
 
   Widget _buildPieChart() {
     List<PieChartSectionData> sections = [];
-    List<Color> colors = [
-      Colors.purple,
-      Colors.cyan,
-      Colors.green,
-      Colors.red,
-    ];
+    final Map<String, Color> statusColors = {
+      'WAITING': Colors.orange,
+      'ACCEPTED': Colors.purple,
+      'PICKED_UP': Colors.cyan,
+      'DELIVERED': Colors.green,
+      'REJECTED': Colors.red,
+    };
 
-    for (int i = 0; i < _statusData.length; i++) {
-      final data = _statusData[i];
+    final nonZeroData = _statusData.where((data) => (data['count'] as int) > 0).toList();
+
+    for (int i = 0; i < nonZeroData.length; i++) {
+      final data = nonZeroData[i];
+      final status = data['status'] as String;
+      final color = statusColors[status] ?? Colors.grey;
+      
       sections.add(
         PieChartSectionData(
-          color: colors[i % colors.length],
+          color: color,
           value: (data['count'] as int).toDouble(),
           title: '${data['percentage']}%',
-          radius: 45,
+          radius: 50,
           titleStyle: const TextStyle(
-            fontSize: 11,
+            fontSize: 10,
             fontWeight: FontWeight.w700,
             color: Colors.white,
           ),
@@ -989,11 +1211,466 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
       );
     }
 
-    return PieChart(
-      PieChartData(
-        sections: sections,
-        centerSpaceRadius: 28,
-        sectionsSpace: 2,
+    return Column(
+      children: [
+        Expanded(
+          child: sections.isEmpty
+              ? Center(
+                  child: Text(
+                    'Aucune donnée',
+                    style: TextStyle(color: Colors.grey[500]),
+                  ),
+                )
+              : PieChart(
+                  PieChartData(
+                    sections: sections,
+                    centerSpaceRadius: 30,
+                    sectionsSpace: 2,
+                  ),
+                ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: _statusData.map((data) {
+            final status = data['status'] as String;
+            final color = statusColors[status] ?? Colors.grey;
+            final count = data['count'] as int;
+            return Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: count > 0 ? color : Colors.grey[300],
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '${_getStatusLabel(status)} ($count)',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: count > 0 ? Colors.black87 : Colors.grey[500],
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDeliveryFeesSection(bool isMobile) {
+    final filteredOrders = _getFilteredDeliveryOrders();
+    final totalEarnings = filteredOrders.fold<double>(0, (sum, order) {
+      if (['DELIVERED', 'PICKED_UP'].contains(order['orderStatus'])) {
+        return sum + ((order['deliveryFee'] ?? 0) as num).toDouble();
+      }
+      return sum;
+    });
+
+    return SliverPadding(
+      padding: EdgeInsets.symmetric(
+        horizontal: isMobile ? 12 : 24,
+        vertical: isMobile ? 12 : 16,
+      ),
+      sliver: SliverToBoxAdapter(
+        child: Container(
+          padding: EdgeInsets.all(isMobile ? 16 : 24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.grey[200]!, width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.monetization_on_rounded,
+                      color: Colors.green,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Frais de Livraison',
+                          style: TextStyle(
+                            fontSize: isMobile ? 14 : 16,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          'Total: ${totalEarnings.toStringAsFixed(2)} DT',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.green,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _buildDeliveryFilters(isMobile),
+              const SizedBox(height: 16),
+              if (filteredOrders.isEmpty)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Text(
+                      'Aucune commande trouvée',
+                      style: TextStyle(
+                        color: Colors.grey[500],
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                )
+              else ...[
+                ...filteredOrders
+                    .skip((_currentPage - 1) * _itemsPerPage)
+                    .take(_itemsPerPage)
+                    .map((order) => _buildDeliveryFeeRow(order, isMobile)),
+                if (filteredOrders.length > _itemsPerPage)
+                  _buildPagination(filteredOrders.length, isMobile),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeliveryFilters(bool isMobile) {
+    return Row(
+      children: [
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: _selectedStatusFilter,
+            decoration: InputDecoration(
+              labelText: 'Statut',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+            ),
+            items: statusOptionsMap.keys.map((String value) {
+              return DropdownMenuItem<String>(
+                value: value,
+                child: Text(
+                  value,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              );
+            }).toList(),
+            onChanged: (String? newValue) {
+              setState(() {
+                _selectedStatusFilter = newValue ?? 'TOUS';
+                _currentPage = 1;
+              });
+            },
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            value: _selectedFeeFilter,
+            decoration: InputDecoration(
+              labelText: 'Paiement',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
+            ),
+            items: feeFilterOptions.entries.map((entry) {
+              return DropdownMenuItem<String>(
+                value: entry.key,
+                child: Text(
+                  entry.value,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              );
+            }).toList(),
+            onChanged: (String? newValue) {
+              setState(() {
+                _selectedFeeFilter = newValue ?? 'TOUS';
+                _currentPage = 1;
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<Map<String, dynamic>> _getFilteredDeliveryOrders() {
+    return _allOrders.where((order) {
+      final orderStatus = order['orderStatus']?.toString().toUpperCase() ?? '';
+      final selectedStatuses = statusOptionsMap[_selectedStatusFilter] ?? [];
+      final statusMatches = selectedStatuses.isEmpty || selectedStatuses.contains(orderStatus);
+
+      final deliveryFee = ((order['deliveryFee'] ?? 0) as num).toDouble();
+      final isPaid = ['DELIVERED', 'PICKED_UP'].contains(orderStatus);
+      bool feeMatches = true;
+      
+      if (_selectedFeeFilter == 'PAYÉ') {
+        feeMatches = isPaid && deliveryFee > 0;
+      } else if (_selectedFeeFilter == 'NON_PAYÉ') {
+        feeMatches = !isPaid || deliveryFee == 0;
+      }
+
+      return statusMatches && feeMatches;
+    }).toList();
+  }
+
+  List<Map<String, dynamic>> _getAllDeliveredOrders() {
+    return _allOrders.where((order) {
+      final orderStatus = order['orderStatus']?.toString().toUpperCase() ?? '';
+      return ['DELIVERED', 'PICKED_UP'].contains(orderStatus);
+    }).toList();
+  }
+
+  Widget _buildDeliveryFeeRow(Map<String, dynamic> order, bool isMobile) {
+    final orderId = order['orderId'] ?? 0;
+    final status = order['orderStatus'] ?? 'UNKNOWN';
+    final fee = ((order['deliveryFee'] ?? 0) as num).toDouble();
+    final date = _parseDate(order['orderDate']);
+    final customerName = order['customerName'] ?? 'Client';
+    final isPaid = ['DELIVERED', 'PICKED_UP'].contains(status);
+
+    final statusColor = _getStatusColor(status);
+    final statusLabel = _getStatusLabel(status);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              _getStatusIcon(status),
+              color: statusColor,
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Commande #$orderId',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        statusLabel,
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w600,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        customerName,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[600],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      date != null
+                          ? '${date.day}/${date.month}/${date.year}'
+                          : 'N/A',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Frais de livraison:',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Text(
+                          '${fee.toStringAsFixed(2)} DT',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: isPaid ? Colors.green : Colors.orange,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        Icon(
+                          isPaid ? Icons.check_circle : Icons.schedule,
+                          size: 12,
+                          color: isPaid ? Colors.green : Colors.orange,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPagination(int totalItems, bool isMobile) {
+    final totalPages = (totalItems / _itemsPerPage).ceil();
+    if (totalPages <= 1) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(
+            onPressed: _currentPage > 1
+                ? () => setState(() => _currentPage--)
+                : null,
+            icon: const Icon(Icons.chevron_left),
+            iconSize: 20,
+          ),
+          ...List.generate(
+            totalPages > 5 ? 5 : totalPages,
+            (index) {
+              int pageNumber;
+              if (totalPages <= 5) {
+                pageNumber = index + 1;
+              } else {
+                if (_currentPage <= 3) {
+                  pageNumber = index + 1;
+                } else if (_currentPage >= totalPages - 2) {
+                  pageNumber = totalPages - 4 + index;
+                } else {
+                  pageNumber = _currentPage - 2 + index;
+                }
+              }
+
+              return GestureDetector(
+                onTap: () => setState(() => _currentPage = pageNumber),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _currentPage == pageNumber
+                        ? AppColors.primary
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _currentPage == pageNumber
+                          ? AppColors.primary
+                          : Colors.grey[300]!,
+                    ),
+                  ),
+                  child: Text(
+                    pageNumber.toString(),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _currentPage == pageNumber
+                          ? Colors.white
+                          : Colors.grey[700],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            onPressed: _currentPage < totalPages
+                ? () => setState(() => _currentPage++)
+                : null,
+            icon: const Icon(Icons.chevron_right),
+            iconSize: 20,
+          ),
+        ],
       ),
     );
   }
@@ -1246,6 +1923,8 @@ class _DeliveryStatisticsPageState extends State<DeliveryStatisticsPage>
         return 'Récupéré';
       case 'DELIVERED':
         return 'Livré';
+      case 'ACCEPTED':
+        return 'Accepté';
       case 'REJECTED':
         return 'Rejeté';
       default:

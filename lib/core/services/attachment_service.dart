@@ -1,11 +1,21 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:flutter/cupertino.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import '../utils/constants.dart';
+import 'auth_service.dart';
 
 class AttachmentService {
-  static const String baseUrl = 'http://192.168.1.216:8080';
+  static const String baseUrl = ApiConstants.baseUrl;
+  final AuthService _authService = AuthService();
+
+  Future<Map<String, String>> _getHeaders() async {
+    final token = await _authService.getAccessToken();
+    return {
+      'Content-Type': 'application/json',
+      if (token != null) 'Authorization': 'Bearer $token',
+    };
+  }
 
   // Helper to handle responses
   Future<Map<String, dynamic>> _handleResponse(http.Response response) async {
@@ -32,55 +42,60 @@ class AttachmentService {
     }
   }
 
-  // GET /attachments - Get all attachments (returns metadata only, no file data)
-  Future<List<Map<String, dynamic>>> getAllAttachments() async {
+  Future<List<Map<String, dynamic>>> getAllAttachments({int retry = 0}) async {
     try {
+      final headers = await _getHeaders();
+      headers['Accept'] = 'application/json';
       final response = await http.get(
         Uri.parse('$baseUrl/attachments'),
-        headers: {'Accept': 'application/json'},
+        headers: headers,
       );
-
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
         return data.cast<Map<String, dynamic>>();
-      } else {
-        throw Exception('Failed to load attachments: ${response.statusCode}');
       }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getAllAttachments(retry: 1);
+      }
+      throw Exception('Failed to load attachments: ${response.statusCode}');
     } catch (e) {
-      throw Exception('Error fetching attachments: $e');
+      rethrow;
     }
   }
 
-  // GET /attachments/{id} - Get attachment metadata by ID
-  Future<Map<String, dynamic>?> getAttachmentById(int id) async {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<Map<String, dynamic>?> getAttachmentById(int id, {int retry = 0}) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/attachments/$id'),
-        headers: {'Accept': 'application/json'},
+        headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
-      } else if (response.statusCode == 404) {
-        return null;
-      } else {
-        final error = await _handleResponse(response);
-        throw Exception(error['error'] ?? 'Failed to load attachment');
       }
+      if (response.statusCode == 404) return null;
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getAttachmentById(id, retry: 1);
+      }
+      final error = await _handleResponse(response);
+      throw Exception(error['error'] ?? 'Failed to load attachment');
     } catch (e) {
       throw Exception('Error fetching attachment: $e');
     }
   }
 
-  // GET /attachments/download/{id} - Download attachment file data
-  Future<AttachmentDownload> downloadAttachment(int id) async {
+  // ✅ FIXED: Added token to headers
+  Future<AttachmentDownload> downloadAttachment(int id, {int retry = 0}) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/attachments/download/$id'),
+        headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
-        // Extract filename from Content-Disposition header
         String? filename;
         final contentDisposition = response.headers['content-disposition'];
         if (contentDisposition != null) {
@@ -98,29 +113,33 @@ class AttachmentService {
           filename: filename ?? 'download',
           contentType: contentType,
         );
-      } else if (response.statusCode == 404) {
-        throw Exception('Attachment not found');
-      } else {
-        throw Exception('Failed to download attachment: ${response.statusCode}');
       }
+      if (response.statusCode == 404) {
+        throw Exception('Attachment not found');
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return downloadAttachment(id, retry: 1);
+      }
+      throw Exception('Failed to download attachment: ${response.statusCode}');
     } catch (e) {
       throw Exception('Error downloading attachment: $e');
     }
   }
 
-  // POST /attachments - Create attachment (multipart with file, entityType, entityId)
+  // ✅ FIXED: Added token to headers
   Future<Map<String, dynamic>> createAttachment({
     required Uint8List fileBytes,
     required String fileName,
-    required String contentType, // e.g., 'image/jpeg', 'application/pdf'
-    required String entityType, // 'PRODUCT', 'CATEGORY', 'USER', 'COMPANY'
+    required String contentType,
+    required String entityType,
     required int entityId,
+    int retry = 0,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/attachments');
       final request = http.MultipartRequest('POST', uri);
 
-      // Validate inputs before sending
       if (fileBytes.isEmpty) {
         throw Exception('File data cannot be empty');
       }
@@ -133,7 +152,12 @@ class AttachmentService {
         throw Exception('Invalid entity type. Must be: PRODUCT, CATEGORY, USER, or COMPANY');
       }
 
-      // Add the file part
+      // Add authorization header
+      final token = await _authService.getAccessToken();
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+
       request.files.add(http.MultipartFile.fromBytes(
         'file',
         fileBytes,
@@ -141,7 +165,6 @@ class AttachmentService {
         contentType: MediaType.parse(contentType),
       ));
 
-      // Add form fields (entityType will be normalized to uppercase in backend)
       request.fields['entityType'] = entityType.toUpperCase();
       request.fields['entityId'] = entityId.toString();
 
@@ -150,16 +173,26 @@ class AttachmentService {
 
       if (response.statusCode == 201) {
         return jsonDecode(response.body) as Map<String, dynamic>;
-      } else {
-        final errorData = await _handleResponse(response);
-        throw Exception(errorData['error'] ?? 'Failed to create attachment');
       }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return createAttachment(
+          fileBytes: fileBytes,
+          fileName: fileName,
+          contentType: contentType,
+          entityType: entityType,
+          entityId: entityId,
+          retry: 1,
+        );
+      }
+      final errorData = await _handleResponse(response);
+      throw Exception(errorData['error'] ?? 'Failed to create attachment');
     } catch (e) {
       throw Exception('Error creating attachment: $e');
     }
   }
 
-  // PUT /attachments/{id} - Update attachment
+  // ✅ FIXED: Added token to headers
   Future<Map<String, dynamic>> updateAttachment({
     required int id,
     Uint8List? fileBytes,
@@ -167,12 +200,12 @@ class AttachmentService {
     String? contentType,
     String? entityType,
     int? entityId,
+    int retry = 0,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl/attachments/$id');
       final request = http.MultipartRequest('PUT', uri);
 
-      // Add file if provided
       if (fileBytes != null && fileName != null && contentType != null) {
         if (fileBytes.isEmpty) {
           throw Exception('File data cannot be empty');
@@ -185,7 +218,6 @@ class AttachmentService {
         ));
       }
 
-      // Add entity fields if provided
       if (entityType != null) {
         if (!_isValidEntityType(entityType)) {
           throw Exception('Invalid entity type');
@@ -197,72 +229,91 @@ class AttachmentService {
         request.fields['entityId'] = entityId.toString();
       }
 
+      // Add authorization header
+      final token = await _authService.getAccessToken();
+      if (token != null) {
+        request.headers['Authorization'] = 'Bearer $token';
+      }
+
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
-      } else if (response.statusCode == 404) {
-        throw Exception('Attachment not found');
-      } else {
-        final errorData = await _handleResponse(response);
-        throw Exception(errorData['error'] ?? 'Failed to update attachment');
       }
+      if (response.statusCode == 404) {
+        throw Exception('Attachment not found');
+      }
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return updateAttachment(
+          id: id,
+          fileBytes: fileBytes,
+          fileName: fileName,
+          contentType: contentType,
+          entityType: entityType,
+          entityId: entityId,
+          retry: 1,
+        );
+      }
+      final errorData = await _handleResponse(response);
+      throw Exception(errorData['error'] ?? 'Failed to update attachment');
     } catch (e) {
       throw Exception('Error updating attachment: $e');
     }
   }
-  // Get attachments by product ID
-  Future<List<Map<String, dynamic>>> findByProductProductId(int productId) async {
+
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<List<Map<String, dynamic>>> findByProductProductId(int productId, {int retry = 0}) async {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/attachments/product/$productId'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
         final jsonData = jsonDecode(response.body);
         final List<dynamic> attachmentsList = jsonData is List ? jsonData : [];
         return attachmentsList.cast<Map<String, dynamic>>();
-      } else if (response.statusCode == 404) {
-        debugPrint('No attachments found for product $productId');
-        return [];
-      } else {
-        throw Exception('Failed to fetch attachments: ${response.statusCode}');
       }
+      if (response.statusCode == 404) return [];
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return findByProductProductId(productId, retry: 1);
+      }
+      throw Exception('Failed to fetch attachments: ${response.statusCode}');
     } catch (e) {
-      debugPrint('Error fetching attachments for product $productId: $e');
       return [];
     }
   }
 
-  // DELETE /attachments/{id} - Delete attachment
-  Future<bool> deleteAttachment(int id) async {
+  // ✅ FIXED: Added headers and token refresh logic
+  Future<bool> deleteAttachment(int id, {int retry = 0}) async {
     try {
       final response = await http.delete(
         Uri.parse('$baseUrl/attachments/$id'),
+        headers: await _getHeaders(),
       );
 
-      if (response.statusCode == 204) {
-        return true;
-      } else if (response.statusCode == 404) {
-        return false;
-      } else {
-        final errorData = await _handleResponse(response);
-        throw Exception(errorData['error'] ?? 'Failed to delete attachment');
+      if (response.statusCode == 204) return true;
+      if (response.statusCode == 404) return false;
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return deleteAttachment(id, retry: 1);
       }
+      final errorData = await _handleResponse(response);
+      throw Exception(errorData['error'] ?? 'Failed to delete attachment');
     } catch (e) {
       throw Exception('Error deleting attachment: $e');
     }
   }
 
-  // GET /attachments/entity/{entityType}/{entityId} - Get attachments by entity
+  // ✅ FIXED: Added headers and token refresh logic
   Future<List<Map<String, dynamic>>> getAttachmentsByEntity(
       String entityType,
-      int entityId
-      ) async {
+      int entityId, {
+        int retry = 0,
+      }) async {
     try {
       if (!_isValidEntityType(entityType)) {
         throw Exception('Invalid entity type. Must be: PRODUCT, CATEGORY, USER, or COMPANY');
@@ -270,32 +321,33 @@ class AttachmentService {
 
       final response = await http.get(
         Uri.parse('$baseUrl/attachments/entity/${entityType.toUpperCase()}/$entityId'),
-        headers: {'Accept': 'application/json'},
+        headers: await _getHeaders(),
       );
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
         return data.cast<Map<String, dynamic>>();
-      } else if (response.statusCode == 400) {
+      }
+      if (response.statusCode == 400) {
         final errorData = await _handleResponse(response);
         throw Exception(errorData['error'] ?? 'Invalid request parameters');
-      } else if (response.statusCode == 404) {
-        return []; // Entity exists but has no attachments
-      } else {
-        throw Exception('Failed to load attachments: ${response.statusCode}');
       }
+      if (response.statusCode == 404) return [];
+      if (response.statusCode == 401 && retry == 0) {
+        await _authService.refreshAccessToken();
+        return getAttachmentsByEntity(entityType, entityId, retry: 1);
+      }
+      throw Exception('Failed to load attachments: ${response.statusCode}');
     } catch (e) {
       throw Exception('Error fetching attachments by entity: $e');
     }
   }
 
-  // Helper method to validate entity types
   bool _isValidEntityType(String entityType) {
     final validTypes = ['PRODUCT', 'CATEGORY', 'USER', 'COMPANY'];
     return validTypes.contains(entityType.toUpperCase());
   }
 
-  // Helper to get file size in human-readable format
   String formatFileSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -303,7 +355,6 @@ class AttachmentService {
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
-  // Helper to check if file type is allowed
   bool isFileTypeAllowed(String contentType) {
     final allowedTypes = [
       'image/jpeg',
@@ -317,11 +368,9 @@ class AttachmentService {
     return allowedTypes.contains(contentType.toLowerCase());
   }
 
-  // Helper to get max file size (10MB)
   int get maxFileSize => 10 * 1024 * 1024;
 }
 
-// Data class for download response
 class AttachmentDownload {
   final Uint8List data;
   final String filename;
@@ -336,8 +385,4 @@ class AttachmentDownload {
   bool get isImage => contentType.startsWith('image/');
   bool get isPdf => contentType == 'application/pdf';
   bool get isExcel => contentType.contains('excel') || contentType.contains('spreadsheet');
-
-
-
-
 }

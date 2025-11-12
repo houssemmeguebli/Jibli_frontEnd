@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import '../../../../core/services/pagination_service.dart';
 import '../../../../Core/services/attachment_service.dart';
 import '../../../../core/theme/theme.dart';
@@ -6,8 +7,9 @@ import '../../../../Core/services/order_service.dart';
 import '../../../../Core/services/order_item_service.dart';
 import '../../../../Core/services/product_service.dart';
 import '../../../../Core/services/user_service.dart';
+import '../../../../core/services/auth_service.dart';
+import '../../../../core/services/company_service.dart';
 import 'dart:typed_data' as typed_data;
-
 import 'owner_order_details_page.dart';
 
 class OwnerOrdersPage extends StatefulWidget {
@@ -21,17 +23,22 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
   final OrderService _orderService = OrderService();
   final OrderItemService _orderItemService = OrderItemService();
   final ProductService _productService = ProductService();
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
   final AttachmentService _attachmentService = AttachmentService();
+  final AuthService _authService = AuthService();
+  final CompanyService _companyService = CompanyService();
   final PaginationService _paginationService = PaginationService(itemsPerPage: 10);
 
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _filteredOrders = [];
   bool _isLoading = true;
   String _selectedFilter = 'Tous';
+  String _selectedCompany = 'Toutes';
   String _searchQuery = '';
   int _currentPage = 1;
-  final int currentUserId = 2;
+  int? _currentUserId;
+  List<String> _companies = ['Toutes'];
+  Map<String, int> _companyMap = {};
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   final TextEditingController _searchController = TextEditingController();
@@ -46,6 +53,14 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
+    _loadCurrentUserId();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
     _loadOwnerOrders();
   }
 
@@ -60,53 +75,123 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
     try {
       setState(() => _isLoading = true);
 
-      final allOrders = await _orderService.getAllOrders();
-      final List<Map<String, dynamic>> ownerOrders = [];
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
+      }
+
+      // Load owner companies first
+      await _loadOwnerCompanies();
+
+      List<Map<String, dynamic>> allOrders = [];
+      
+      // If company filter is selected and not 'Toutes', get orders for specific company
+      if (_selectedCompany != 'Toutes' && _companyMap.containsKey(_selectedCompany)) {
+        final companyId = _companyMap[_selectedCompany]!;
+        allOrders = await _orderService.getOrdersByCompanyId(companyId);
+      } else {
+        // Get all orders for the owner's companies
+        allOrders = await _orderService.getOrdersByCompanyUserId(_currentUserId!);
+      }
+
+      // Get all unique user IDs for batch fetching
+      final Set<int> userIds = {};
+      for (var order in allOrders) {
+        final userId = order['userId'];
+        if (userId != null) userIds.add(userId);
+      }
+
+      // Fetch all users in parallel
+      final Map<int, Map<String, dynamic>> usersMap = {};
+      if (userIds.isNotEmpty) {
+        final userFutures = userIds.map((id) => _userService.getUserById(id));
+        final users = await Future.wait(userFutures);
+        for (int i = 0; i < userIds.length; i++) {
+          final userId = userIds.elementAt(i);
+          if (users[i] != null) usersMap[userId] = users[i]!;
+        }
+      }
+
+      // Get all order items in parallel
+      final List<Future<List<dynamic>>> orderItemsFutures = [];
+      final List<int> orderIds = [];
 
       for (var order in allOrders) {
         final orderId = order['orderId'];
         if (orderId != null) {
-          final orderItems = await _orderItemService.getOrderItemsByOrder(orderId);
-
-          bool hasOwnerProduct = false;
-          int ownerItemCount = 0;
-          double ownerRevenue = 0.0;
-          List<Map<String, dynamic>> ownerOrderItems = [];
-
-          for (var item in orderItems) {
-            final productId = item['productId'];
-            if (productId != null) {
-              final product = await _productService.getProductById(productId);
-              if (product != null && product['userId'] == currentUserId) {
-                hasOwnerProduct = true;
-                ownerItemCount += (item['quantity'] ?? 0) as int;
-                ownerRevenue += ((item['quantity'] ?? 0) as int) * ((product['productFinalePrice'] ?? 0) as num).toDouble();
-
-                item['productDetails'] = product;
-                ownerOrderItems.add(item);
-              }
-            }
-          }
-
-          if (hasOwnerProduct) {
-            final customerId = order['userId'];
-            if (customerId != null) {
-              final customer = await _userService.getUserById(customerId);
-              if (customer != null) {
-                order['customerName'] = customer['fullName'] ?? 'Client';
-                order['customerEmail'] = customer['email'] ?? '';
-                order['customerPhone'] = customer['phoneNumber'] ?? '';
-              }
-            }
-
-            order['orderItems'] = ownerOrderItems;
-            order['ownerItemCount'] = ownerItemCount;
-            order['ownerRevenue'] = ownerRevenue;
-            ownerOrders.add(order);
-          }
+          orderIds.add(orderId);
+          orderItemsFutures.add(_orderItemService.getOrderItemsByOrder(orderId));
         }
       }
 
+      final List<List<dynamic>> allOrderItemsList = await Future.wait(orderItemsFutures);
+      final Map<int, List<dynamic>> orderItemsMap = {};
+
+      for (int i = 0; i < orderIds.length; i++) {
+        orderItemsMap[orderIds[i]] = allOrderItemsList[i];
+      }
+
+      // Get all unique product IDs
+      final Set<int> productIds = {};
+      for (var orderItems in allOrderItemsList) {
+        for (var item in orderItems) {
+          final productId = item['productId'];
+          if (productId != null) productIds.add(productId);
+        }
+      }
+
+      // Fetch all products in parallel
+      final Map<int, Map<String, dynamic>> productsMap = {};
+      if (productIds.isNotEmpty) {
+        final productFutures = productIds.map((id) => _productService.getProductById(id));
+        final products = await Future.wait(productFutures);
+        for (int i = 0; i < productIds.length; i++) {
+          final productId = productIds.elementAt(i);
+          if (products[i] != null) productsMap[productId] = products[i]!;
+        }
+      }
+
+      // Process orders
+      final List<Map<String, dynamic>> ownerOrders = [];
+
+      for (var order in allOrders) {
+        final customerId = order['userId'];
+        if (customerId != null) {
+          final customer = usersMap[customerId];
+          if (customer != null) {
+            order['customerName'] = customer['fullName'] ?? 'Client';
+            order['customerEmail'] = customer['email'] ?? '';
+            order['customerPhone'] = customer['phoneNumber'] ?? '';
+          }
+        }
+
+        try {
+          if (order['company'] != null && order['company']['companyName'] != null) {
+            final companyName = order['company']['companyName'].toString();
+            order['companyName'] = companyName;
+          }
+        } catch (e) {
+          debugPrint('Error processing company: $e');
+          order['companyName'] = 'Entreprise inconnue';
+        }
+
+        final orderId = order['orderId'];
+        if (orderId != null) {
+          final orderItems = orderItemsMap[orderId] ?? [];
+          for (var item in orderItems) {
+            final productId = item['productId'];
+            if (productId != null && productsMap[productId] != null) {
+              item['productDetails'] = productsMap[productId];
+            }
+          }
+          order['orderItems'] = orderItems;
+        }
+
+        order['ownerRevenue'] = order['totalAmount'] ?? 0.0;
+        order['ownerItemCount'] = order['quantity'] ?? 0;
+        ownerOrders.add(order);
+      }
+
+      // Sort by date
       ownerOrders.sort((a, b) {
         final dateA = _parseDate(a['orderDate']);
         final dateB = _parseDate(b['orderDate']);
@@ -117,6 +202,7 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         _orders = ownerOrders;
         _filteredOrders = ownerOrders;
         _isLoading = false;
+        debugPrint('Loaded ${ownerOrders.length} orders');
       });
       _animationController.forward();
     } catch (e) {
@@ -124,6 +210,29 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
       if (mounted) {
         _showSnackBar('Erreur de chargement: $e', isError: true);
       }
+      debugPrint('Error loading orders: $e');
+    }
+  }
+
+  Future<void> _loadOwnerCompanies() async {
+    try {
+      if (_currentUserId == null) return;
+      
+      // Get companies owned by the current user
+      final companies = await _companyService.getCompanyByUserID(_currentUserId!);
+      
+      _companyMap = {for (var comp in companies)
+        if (comp['companyName'] != null) comp['companyName'] as String: comp['companyId'] as int};
+
+      _companies = ['Toutes', ...companies
+          .where((c) => c['companyName'] != null)
+          .map((c) => c['companyName'] as String)];
+          
+      debugPrint('Loaded ${companies.length} owner companies');
+    } catch (e) {
+      debugPrint('Error loading owner companies: $e');
+      _companies = ['Toutes'];
+      _companyMap = {};
     }
   }
 
@@ -132,12 +241,16 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
       _filteredOrders = _orders.where((order) {
         final statusMatch = _selectedFilter == 'Tous' || _matchesStatus(order['orderStatus']);
 
+        final companyMatch = _selectedCompany == 'Toutes' ||
+            (order['companyName'] ?? '').toLowerCase() == _selectedCompany.toLowerCase();
+
         final searchMatch = _searchQuery.isEmpty ||
             (order['customerName'] ?? '').toLowerCase().contains(_searchQuery.toLowerCase()) ||
             (order['orderId'].toString()).contains(_searchQuery) ||
-            (order['customerEmail'] ?? '').toLowerCase().contains(_searchQuery.toLowerCase());
+            (order['customerEmail'] ?? '').toLowerCase().contains(_searchQuery.toLowerCase()) ||
+            (order['companyName'] ?? '').toLowerCase().contains(_searchQuery.toLowerCase());
 
-        return statusMatch && searchMatch;
+        return statusMatch && companyMatch && searchMatch;
       }).toList();
       _currentPage = 1;
     });
@@ -154,7 +267,7 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         return upperStatus == 'WAITING';
       case 'Accepté':
         return upperStatus == 'ACCEPTED';
-      case 'Récupéré':
+      case 'En livraison':
         return upperStatus == 'PICKED_UP';
       case 'Livré':
         return upperStatus == 'DELIVERED';
@@ -194,7 +307,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
     );
   }
 
-
   Future<void> _assignDelivery(Map<String, dynamic> order) async {
     try {
       final deliveryUsers = await _userService.getUsersByUserRole('Delivery');
@@ -204,7 +316,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         return;
       }
 
-      // Filter only available deliverers
       final availableDeliverers = deliveryUsers
           .where((user) => user['available'] == true)
           .toList();
@@ -214,7 +325,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         return;
       }
 
-      // Sort by rating
       availableDeliverers.sort((a, b) {
         double aRating = (a['rating'] ?? 0).toDouble();
         double bRating = (b['rating'] ?? 0).toDouble();
@@ -231,7 +341,10 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         final orderId = order['orderId'];
 
         await _orderService.patchOrderStatus(orderId, 'WAITING');
-        await _orderService.updateOrder(order['orderId'], {'deliveryId': deliveryId,'assignedById': currentUserId,} );
+        await _orderService.updateOrder(orderId, {
+          'deliveryId': deliveryId,
+          'assignedById': _currentUserId,
+        });
         await _loadOwnerOrders();
 
         if (mounted) {
@@ -245,15 +358,13 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
     }
   }
 
-
-
   Widget _buildDeliverySelectionDialog(
       List<Map<String, dynamic>> deliveryUsers,
       Map<String, dynamic> order) {
     final screenSize = MediaQuery.of(context).size;
     final isMobile = screenSize.width < 600;
     final isTablet = screenSize.width >= 600 && screenSize.width < 1024;
-    
+
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       insetPadding: EdgeInsets.symmetric(
@@ -268,7 +379,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Enhanced Header
             Container(
               padding: EdgeInsets.all(isMobile ? 20 : 24),
               decoration: BoxDecoration(
@@ -357,19 +467,18 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
                 ],
               ),
             ),
-            // Delivery List
             Flexible(
               child: deliveryUsers.isEmpty
                   ? _buildEmptyDeliveryState(isMobile)
                   : ListView.separated(
-                      padding: EdgeInsets.all(isMobile ? 16 : 20),
-                      itemCount: deliveryUsers.length,
-                      separatorBuilder: (context, index) => SizedBox(height: isMobile ? 12 : 16),
-                      itemBuilder: (context, index) {
-                        final user = deliveryUsers[index];
-                        return _buildDeliveryPersonCard(context, user, order, isMobile);
-                      },
-                    ),
+                padding: EdgeInsets.all(isMobile ? 16 : 20),
+                itemCount: deliveryUsers.length,
+                separatorBuilder: (context, index) => SizedBox(height: isMobile ? 12 : 16),
+                itemBuilder: (context, index) {
+                  final user = deliveryUsers[index];
+                  return _buildDeliveryPersonCard(context, user, order, isMobile);
+                },
+              ),
             ),
           ],
         ),
@@ -387,17 +496,14 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
     final phone = user['phoneNumber'] ?? 'Non spécifié';
     final isAvailable = user['available'] ?? false;
     final rating = (user['rating'] ?? 4.5).toDouble();
-    final completedOrders = user['completedOrders'] ?? 0;
-    final distance = user['distance'] ?? '2.5 km';
-    final estimatedTime = user['estimatedTime'] ?? '15-20 min';
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: isAvailable 
-              ? AppColors.primary.withOpacity(0.3) 
+          color: isAvailable
+              ? AppColors.primary.withOpacity(0.3)
               : Colors.grey[300]!,
           width: isAvailable ? 2 : 1,
         ),
@@ -415,7 +521,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         padding: EdgeInsets.all(isMobile ? 16 : 20),
         child: Column(
           children: [
-            // Header with avatar and basic info
             Row(
               children: [
                 Container(
@@ -483,8 +588,8 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: isAvailable 
-                                  ? Colors.green.withOpacity(0.15) 
+                              color: isAvailable
+                                  ? Colors.green.withOpacity(0.15)
                                   : Colors.red.withOpacity(0.15),
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -509,6 +614,20 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
                                   ),
                                 ),
                               ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(Icons.star, size: 14, color: Colors.amber[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
@@ -541,11 +660,10 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
               ],
             ),
             const SizedBox(height: 16),
-            // Action Button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: isAvailable 
+                onPressed: isAvailable
                     ? () => Navigator.pop(context, user)
                     : null,
                 style: ElevatedButton.styleFrom(
@@ -626,37 +744,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildStatItem({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
-  }) {
-    return Column(
-      children: [
-        Icon(icon, size: 20, color: color),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
-            color: Colors.grey[600],
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: Colors.black87,
-          ),
-        ),
-      ],
     );
   }
 
@@ -820,32 +907,233 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-              strokeWidth: 3,
+    final isMobile = MediaQuery.of(context).size.width < 768;
+    return Column(
+      children: [
+        _buildHeader(isMobile),
+        _buildSearchAndFilter(isMobile),
+        Expanded(
+          child: Skeletonizer(
+            enabled: true,
+            child: ListView.builder(
+              padding: EdgeInsets.all(isMobile ? 12 : 16),
+              itemCount: 6,
+              itemBuilder: (context, index) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _buildSkeletonOrderCard(isMobile),
+              ),
             ),
           ),
-          const SizedBox(height: 24),
-          Text(
-            'Chargement des commandes...',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w500,
-            ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSkeletonOrderCard(bool isMobile) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
+      child: Padding(
+        padding: EdgeInsets.all(isMobile ? 14 : 16),
+        child: isMobile
+            ? _buildMobileSkeletonCard()
+            : _buildDesktopSkeletonCard(),
+      ),
+    );
+  }
+
+  Widget _buildMobileSkeletonCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 120,
+                    height: 16,
+                    color: Colors.grey[300],
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: 80,
+                    height: 12,
+                    color: Colors.grey[300],
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 60,
+              height: 24,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 50,
+                  height: 12,
+                  color: Colors.grey[300],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  width: 70,
+                  height: 16,
+                  color: Colors.grey[300],
+                ),
+              ],
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  width: 50,
+                  height: 12,
+                  color: Colors.grey[300],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  width: 30,
+                  height: 16,
+                  color: Colors.grey[300],
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDesktopSkeletonCard() {
+    return Row(
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        const SizedBox(width: 20),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 140,
+                height: 16,
+                color: Colors.grey[300],
+              ),
+              const SizedBox(height: 4),
+              Container(
+                width: 100,
+                height: 14,
+                color: Colors.grey[300],
+              ),
+            ],
+          ),
+        ),
+        Container(
+          width: 80,
+          height: 24,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        const SizedBox(width: 24),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              width: 80,
+              height: 16,
+              color: Colors.grey[300],
+            ),
+            const SizedBox(height: 4),
+            Container(
+              width: 50,
+              height: 12,
+              color: Colors.grey[300],
+            ),
+          ],
+        ),
+        const SizedBox(width: 24),
+        Container(
+          width: 70,
+          height: 24,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+        const SizedBox(width: 20),
+        Container(
+          width: 100,
+          height: 32,
+          decoration: BoxDecoration(
+            color: Colors.grey[300],
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      ],
     );
   }
 
@@ -855,9 +1143,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
       0,
           (sum, order) => sum + ((order['ownerRevenue'] ?? 0.0) as num).toDouble(),
     );
-    final pendingCount = _orders
-        .where((o) => (o['orderStatus']).toString().toUpperCase() == 'PENDING')
-        .length;
 
     return Container(
       padding: EdgeInsets.all(isMobile ? 16 : 24),
@@ -868,73 +1153,68 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
           colors: [AppColors.primary, AppColors.primary.withOpacity(0.85)],
         ),
       ),
-      child: Column(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(14),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        Icons.shopping_cart_rounded,
+                        color: Colors.white,
+                        size: isMobile ? 24 : 28,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Gestion des Commandes',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: isMobile ? 20 : 24,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          child: Icon(
-                            Icons.shopping_cart_rounded,
-                            color: Colors.white,
-                            size: isMobile ? 24 : 28,
+                          Text(
+                            'Suivez et gérez vos ventes',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                              fontSize: isMobile ? 12 : 13,
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Gestion des Commandes',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: isMobile ? 20 : 24,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Text(
-                                'Suivez et gérez vos ventes',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.8),
-                                  fontSize: isMobile ? 12 : 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              ),
-              IconButton(
-                onPressed: _loadOwnerOrders,
-                icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 26),
-                tooltip: 'Actualiser',
-                padding: const EdgeInsets.all(8),
-              ),
-            ],
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: _loadOwnerOrders,
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 26),
+            tooltip: 'Actualiser',
+            padding: const EdgeInsets.all(8),
           ),
         ],
       ),
     );
   }
 
-
   Widget _buildSearchAndFilter(bool isMobile) {
-    final filters = ['Tous', 'En attente', 'En préparation', 'En attente livreur', 'Accepté', 'Récupéré', 'Livré', 'Refusé', 'Annulé'];
+    final filters = ['Tous', 'En attente', 'En préparation', 'En attente livreur', 'Accepté', 'En livraison', 'Livré', 'Refusé', 'Annulé'];
 
     return Container(
       padding: EdgeInsets.all(isMobile ? 12 : 16),
@@ -982,37 +1262,89 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
             ),
           ),
           SizedBox(height: isMobile ? 12 : 16),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: filters.map((filter) {
-                final isSelected = _selectedFilter == filter;
-                return GestureDetector(
-                  onTap: () {
-                    setState(() => _selectedFilter = filter);
-                    _filterAndSearch();
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary : Colors.grey[100],
-                      borderRadius: BorderRadius.circular(20),
-                      border: !isSelected ? Border.all(color: Colors.grey[300]!) : null,
-                    ),
-                    child: Text(
-                      filter,
-                      style: TextStyle(
-                        color: isSelected ? Colors.white : Colors.grey[700],
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                        fontSize: 13,
+          Column(
+            children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: filters.map((filter) {
+                    final isSelected = _selectedFilter == filter;
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() => _selectedFilter = filter);
+                        _filterAndSearch();
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.primary : Colors.grey[100],
+                          borderRadius: BorderRadius.circular(20),
+                          border: !isSelected ? Border.all(color: Colors.grey[300]!) : null,
+                        ),
+                        child: Text(
+                          filter,
+                          style: TextStyle(
+                            color: isSelected ? Colors.white : Colors.grey[700],
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                            fontSize: 13,
+                          ),
+                        ),
                       ),
-                    ),
+                    );
+                  }).toList(),
+                ),
+              ),
+              if (_companies.length > 2) ...[
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _companies.map((company) {
+                      final isSelected = _selectedCompany == company;
+                      return GestureDetector(
+                        onTap: () async {
+                          setState(() => _selectedCompany = company);
+                          await _loadOwnerOrders();
+                        },
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          margin: const EdgeInsets.only(right: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isSelected ? AppColors.success : Colors.grey[50],
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: isSelected ? AppColors.success : Colors.grey[300]!,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.business,
+                                size: 14,
+                                color: isSelected ? Colors.white : Colors.grey[600],
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                company,
+                                style: TextStyle(
+                                  color: isSelected ? Colors.white : Colors.grey[700],
+                                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
                   ),
-                );
-              }).toList(),
-            ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
@@ -1101,7 +1433,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Left side - Items display info
           Expanded(
             child: Text(
               'Affichage $startItem-$endItem sur ${_filteredOrders.length}',
@@ -1115,7 +1446,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
             ),
           ),
           const SizedBox(width: 8),
-          // Middle - Previous button
           SizedBox(
             width: isMobile ? 36 : 40,
             height: isMobile ? 36 : 40,
@@ -1129,7 +1459,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
             ),
           ),
           const SizedBox(width: 6),
-          // Center - Page indicator
           Container(
             padding: EdgeInsets.symmetric(
               horizontal: isMobile ? 10 : 12,
@@ -1149,7 +1478,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
             ),
           ),
           const SizedBox(width: 6),
-          // Right - Next button
           SizedBox(
             width: isMobile ? 36 : 40,
             height: isMobile ? 36 : 40,
@@ -1166,6 +1494,7 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
       ),
     );
   }
+
   Widget _buildOrderCard(Map<String, dynamic> order, bool isMobile) {
     final orderId = order['orderId'] ?? 0;
     final status = order['orderStatus'] ?? 'PENDING';
@@ -1233,6 +1562,15 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
                       color: Colors.grey[600],
                     ),
                   ),
+                  if (order['companyName'] != null)
+                    Text(
+                      order['companyName'],
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1303,6 +1641,15 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
                 customerName,
                 style: TextStyle(fontSize: 14, color: Colors.grey[600]),
               ),
+              if (order['companyName'] != null)
+                Text(
+                  order['companyName'],
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
             ],
           ),
         ),
@@ -1368,7 +1715,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
   Widget _buildStatusTransitionButton(Map<String, dynamic> order) {
     final status = (order['orderStatus'] ?? 'PENDING').toString().toUpperCase();
 
-    // PENDING -> Accept order
     if (status == 'PENDING') {
       return ElevatedButton(
         onPressed: () => _updateOrderStatus(order, 'IN_PREPARATION'),
@@ -1380,7 +1726,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         child: const Text('Accepter', style: TextStyle(color: Colors.white, fontSize: 12)),
       );
     }
-    // IN_PREPARATION -> Ready for delivery
     else if (status == 'IN_PREPARATION') {
       return ElevatedButton(
         onPressed: () => _assignDelivery(order),
@@ -1392,7 +1737,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         child: const Text('Assigner Livreur', style: TextStyle(color: Colors.white, fontSize: 12)),
       );
     }
-    // WAITING -> Waiting for delivery acceptance
     else if (status == 'WAITING') {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -1406,7 +1750,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         ),
       );
     }
-    // ACCEPTED -> Delivery accepted
     else if (status == 'ACCEPTED') {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -1420,7 +1763,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         ),
       );
     }
-    // PICKED_UP -> In delivery
     else if (status == 'PICKED_UP') {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -1434,7 +1776,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         ),
       );
     }
-    // DELIVERED -> Completed
     else if (status == 'DELIVERED') {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -1448,7 +1789,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         ),
       );
     }
-    // REJECTED -> Reassign delivery
     else if (status == 'REJECTED') {
       return ElevatedButton(
         onPressed: () => _assignDelivery(order),
@@ -1460,7 +1800,6 @@ class _OwnerOrdersPageState extends State<OwnerOrdersPage> with TickerProviderSt
         child: const Text('Réassigner', style: TextStyle(color: Colors.white, fontSize: 12)),
       );
     }
-    // CANCELED
     else if (status == 'CANCELED') {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),

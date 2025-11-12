@@ -5,7 +5,9 @@ import '../../../../Core/services/order_item_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/product_service.dart';
 import '../../../../core/services/order_service.dart';
+import '../../../../Core/services/company_service.dart';
 import 'product_detail_page.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class OrderDetailsPage extends StatefulWidget {
   final Map<String, dynamic> order;
@@ -21,10 +23,12 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
   final AttachmentService _attachmentService = AttachmentService();
   final ProductService _productService = ProductService();
   final OrderService _orderService = OrderService();
+  final CompanyService _companyService = CompanyService();
 
   List<Map<String, dynamic>> _orderItems = [];
   Map<int, List<Uint8List>> _productImages = {};
   Map<int, int> _selectedImageIndex = {};
+  Map<String, dynamic>? _companyInfo;
   bool _isLoading = true;
   late String _orderStatus;
 
@@ -32,20 +36,10 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
   void initState() {
     super.initState();
     _orderStatus = widget.order['orderStatus'] ?? 'PENDING';
-    _debugPrintOrderData();
     _loadOrderItems();
+    _loadCompanyInfo();
   }
 
-  void _debugPrintOrderData() {
-    print('=== Order Data Debug ===');
-    print('orderDate: ${widget.order['orderDate']}');
-    print('inPreparationDate: ${widget.order['inPreparationDate']}');
-    print('pickedUpDate: ${widget.order['pickedUpDate']}');
-    print('deliveredDate: ${widget.order['deliveredDate']}');
-    print('canceledDate: ${widget.order['canceledDate']}');
-    print('orderStatus: ${widget.order['orderStatus']}');
-    print('=======================');
-  }
 
   Future<void> _loadOrderItems() async {
     try {
@@ -53,6 +47,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         widget.order['orderId'],
       );
 
+      // First, load all product details
       for (var item in items) {
         final productId = item['productId'];
         try {
@@ -70,9 +65,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         _orderItems = List<Map<String, dynamic>>.from(items);
       });
 
-      for (var item in _orderItems) {
-        await _loadProductImages(item);
-      }
+      // Then load all images for all products
+      await _loadProductImagesForAllItems();
 
       setState(() => _isLoading = false);
     } catch (e) {
@@ -81,51 +75,94 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     }
   }
 
-  Future<void> _loadProductImages(Map<String, dynamic> item) async {
+  Future<void> _loadCompanyInfo() async {
     try {
-      final product = item['product'] as Map<String, dynamic>?;
-      if (product == null) return;
+      final companyId = widget.order['companyId'];
+      if (companyId != null) {
+        final company = await _companyService.getCompanyById(companyId);
+        if (mounted) {
+          setState(() {
+            _companyInfo = company;
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading company info: $e');
+    }
+  }
+  Future<void> _loadProductImagesForAllItems() async {
+    try {
+      final Map<int, List<Uint8List>> images = {};
 
-      final productId = product['productId'];
-      final attachments = product['attachments'] as List<dynamic>? ?? [];
-      final List<Uint8List> images = [];
+      for (var item in _orderItems) {
+        final product = item['product'] as Map<String, dynamic>?;
+        if (product == null) continue;
 
-      for (var attach in attachments) {
+        final productId = product['productId'] as int?;
+        if (productId == null || _productImages.containsKey(productId)) continue;
+
+        final List<Uint8List> productImages = [];
+
         try {
-          final attachmentDownload = await _attachmentService.downloadAttachment(
-            attach['attachmentId'],
-          );
-          images.add(attachmentDownload.data);
+          final attachments =
+          await _attachmentService.findByProductProductId(productId);
+
+          for (var attach in attachments) {
+            try {
+              final attachmentId = attach['attachmentId'] as int?;
+              if (attachmentId != null) {
+                final attachmentDownload =
+                await _attachmentService.downloadAttachment(attachmentId);
+                if (attachmentDownload.data.isNotEmpty) {
+                  productImages.add(attachmentDownload.data);
+                }
+              }
+            } catch (e) {
+              debugPrint('⚠️ Error downloading attachment: $e');
+            }
+          }
         } catch (e) {
-          images.add(Uint8List.fromList([]));
+          debugPrint('⚠️ Error fetching attachments for product $productId: $e');
+        }
+
+        if (productImages.isNotEmpty) {
+          images[productId] = productImages;
         }
       }
 
-      if (mounted) {
+      if (mounted && images.isNotEmpty) {
         setState(() {
-          _productImages[productId] = images;
-          _selectedImageIndex[productId] = 0;
+          for (var entry in images.entries) {
+            _productImages[entry.key] = entry.value;
+            _selectedImageIndex[entry.key] = 0;
+          }
         });
       }
     } catch (e) {
-      print('Error loading product images: $e');
+      debugPrint('❌ Error loading product images: $e');
     }
   }
-
   String _getStatusColor(String status) {
     final upperStatus = status.toUpperCase();
     if (upperStatus == 'PENDING') return '#FFA500';
     if (upperStatus == 'IN_PREPARATION') return '#3B82F6';
+    if (upperStatus == 'WAITING') return '#3B82F6';
+    if (upperStatus == 'ACCEPTED') return '#3B82F6';
+    if (upperStatus == 'REJECTED') return '#3B82F6';
     if (upperStatus == 'PICKED_UP') return '#8B5CF6';
     if (upperStatus == 'DELIVERED') return '#10B981';
     if (upperStatus == 'CANCELED') return '#EF4444';
     return '#6B7280';
   }
 
+
   String _getStatusLabel(String status) {
     final upperStatus = status.toUpperCase();
     if (upperStatus == 'PENDING') return 'En attente';
     if (upperStatus == 'IN_PREPARATION') return 'En traitement';
+    if (upperStatus == 'WAITING') return 'En traitement';
+    if (upperStatus == 'ACCEPTED') return 'En traitement';
+    if (upperStatus == 'REJECTED') return 'En traitement';
     if (upperStatus == 'PICKED_UP') return 'En Route';
     if (upperStatus == 'DELIVERED') return 'Livré';
     if (upperStatus == 'CANCELED') return 'Annulé';
@@ -214,6 +251,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
           children: [
             _buildOrderHeader(),
             _buildCustomerInfo(),
+            if (_companyInfo != null) _buildCompanyInfo(),
             _buildModernStatusTimeline(),
             _buildOrderItemsList(),
             const SizedBox(height: 12),
@@ -228,7 +266,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
 
   Widget _buildOrderHeader() {
     final orderId = widget.order['orderId'];
-    final orderDate = _formatDate(widget.order['orderDate']);
+    final orderDate = _formatDate(widget.order['createdAt']);
 
     return Container(
       margin: const EdgeInsets.all(20),
@@ -338,11 +376,8 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
             value: widget.order['customerPhone'] ?? 'N/A',
           ),
           const SizedBox(height: 12),
-          _buildInfoRow(
-            icon: Icons.location_on_outlined,
-            label: 'Adresse',
-            value: widget.order['customerAddress'] ?? 'N/A',
-            isMultiLine: true,
+          _buildAddressRowWithMap(
+            address: widget.order['customerAddress'] ?? 'N/A',
           ),
         ],
       ),
@@ -401,6 +436,92 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     );
   }
 
+  Widget _buildCompanyInfo() {
+    if (_companyInfo == null) return const SizedBox.shrink();
+
+    final companyName = _companyInfo!['companyName'] ?? 'Entreprise';
+    final companyPhone = _companyInfo!['companyPhone'];
+    final companyAddress = _companyInfo!['companyAddress'];
+    final companySector = _companyInfo!['companySector'];
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.store_outlined,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Informations du Vendeur',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(
+            icon: Icons.business_outlined,
+            label: 'Nom de l\'entreprise',
+            value: companyName,
+          ),
+          if (companySector != null) ...[
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.category_outlined,
+              label: 'Secteur',
+              value: companySector,
+            ),
+          ],
+          if (companyPhone != null) ...[
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.phone_outlined,
+              label: 'Téléphone',
+              value: companyPhone,
+            ),
+          ],
+          if (companyAddress != null) ...[
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.location_on_outlined,
+              label: 'Adresse',
+              value: companyAddress,
+              isMultiLine: true,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildModernStatusTimeline() {
     final upperStatus = _orderStatus.toUpperCase();
 
@@ -409,7 +530,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         'label': 'Commande Passée',
         'icon': Icons.shopping_bag_rounded,
         'status': 'PENDING',
-        'date': widget.order['orderDate'],
+        'date': widget.order['createdAt'],
         'completed': true,
         'color': const Color(0xFF6366F1),
       },
@@ -800,8 +921,9 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
     final productId = product['productId'];
     final productName = product['productName'] ?? 'Produit';
     final quantity = item['quantity'] ?? 1;
-    final unitPrice = (item['unitPrice'] ?? 0).toDouble();
+    final unitPrice = (product['productFinalePrice'] ?? 0).toDouble();
 
+    // ✅ FIX: Get images from map correctly
     final images = _productImages[productId] ?? [];
     final selectedIndex = _selectedImageIndex[productId] ?? 0;
 
@@ -843,7 +965,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
                       ],
                     ),
                   ),
-                  child: images.isNotEmpty && images[selectedIndex].isNotEmpty
+                  child: images.isNotEmpty
                       ? Image.memory(
                     images[selectedIndex],
                     fit: BoxFit.cover,
@@ -926,10 +1048,9 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
       ),
     );
   }
-
   Widget _buildSummary() {
     final subtotal = widget.order['totalAmount'] ?? 0.0;
-    final deliveryFee = 0.0;
+    final deliveryFee = (widget.order['deliveryFee'] ?? 0.0).toDouble();
     final total = (subtotal + deliveryFee).toDouble();
 
     return Container(
@@ -956,7 +1077,7 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
           const SizedBox(height: 12),
           _buildSummaryRow(
             'Livraison',
-            'Gratuite',
+            deliveryFee == 0.0 ? 'Gratuite' : '${deliveryFee.toStringAsFixed(2)} DT',
             isTotal: false,
           ),
           const SizedBox(height: 12),
@@ -1027,6 +1148,186 @@ class _OrderDetailsPageState extends State<OrderDetailsPage> {
         ),
       ),
     );
+  }
+
+  Widget _buildAddressRowWithMap({required String address}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.location_on,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Adresse de Livraison',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      address,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _openLocationViewer(address),
+              icon: const Icon(Icons.map_rounded, size: 18),
+              label: const Text('Voir dans Google Maps'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openLocationViewer(String address) async {
+    double? lat;
+    double? lng;
+
+    try {
+      final latValue = widget.order['latitude'];
+      if (latValue != null) {
+        if (latValue is double) {
+          lat = latValue;
+        } else if (latValue is int) {
+          lat = latValue.toDouble();
+        } else if (latValue is String) {
+          lat = double.tryParse(latValue);
+        }
+      }
+
+      final lngValue = widget.order['longitude'];
+      if (lngValue != null) {
+        if (lngValue is double) {
+          lng = lngValue;
+        } else if (lngValue is int) {
+          lng = lngValue.toDouble();
+        } else if (lngValue is String) {
+          lng = double.tryParse(lngValue);
+        }
+      }
+
+      if (lat == null || lng == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Coordonnées non disponibles pour cette livraison'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      debugPrint('📍 Opening maps with coordinates: lat=$lat, lng=$lng');
+    } catch (e) {
+      debugPrint('❌ Error parsing coordinates: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Erreur lors de la lecture des coordonnées'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    await _openInGoogleMaps(lat!, lng!, address);
+  }
+
+  Future<void> _openInGoogleMaps(double lat, double lng, String address) async {
+    try {
+      final encodedAddress = Uri.encodeComponent(address);
+      final urls = [
+        'https://www.google.com/maps/?q=$lat,$lng',
+        'https://maps.google.com/?q=$lat,$lng',
+        'https://www.google.com/maps/search/$encodedAddress/@$lat,$lng,17z',
+        'https://maps.apple.com/?q=$lat,$lng',
+      ];
+
+      bool opened = false;
+      for (String urlString in urls) {
+        try {
+          final uri = Uri.parse(urlString);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+            opened = true;
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+
+      if (!opened) {
+        try {
+          final fallbackUrl = Uri.parse('https://www.google.com/maps/?q=$lat,$lng');
+          await launchUrl(fallbackUrl);
+          opened = true;
+        } catch (e) {
+          debugPrint('❌ Fallback failed: $e');
+        }
+      }
+
+      if (!opened) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Impossible d\'ouvrir Google Maps'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erreur: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   String _formatDate(dynamic date) {

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/theme.dart';
+import '../../../customer/presentation/pages/profile_page.dart';
+import '../../../auth/pages/login_page.dart';
 import 'owner_dashboard.dart';
 import 'owner_company_page.dart';
 import 'owner_edit_company_page.dart';
@@ -27,6 +29,7 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
     const CompanyPage(),
     const OwnerReviewsPage(),
     const OwnerStatisticsPage(),
+    const ProfilePage(),
   ];
 
   final List<({IconData icon, String label, String route})> _menuItems = [
@@ -36,6 +39,7 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
     (icon: Icons.business_rounded, label: 'Entreprise', route: 'company'),
     (icon: Icons.star_rounded, label: 'Avis Clients', route: 'reviews'),
     (icon: Icons.analytics_rounded, label: 'Statistiques', route: 'statistics'),
+    (icon: Icons.person_rounded, label: 'Profil', route: 'profile'),
   ];
 
   @override
@@ -572,7 +576,9 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
         child: Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () => Navigator.of(context).pushReplacementNamed('/login'),
+            onTap: () => Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (context) => LoginPage()),
+            ),
             borderRadius: BorderRadius.circular(12),
             child: Padding(
               padding: const EdgeInsets.all(8),
@@ -588,7 +594,9 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
           : Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => Navigator.of(context).pushReplacementNamed('/login'),
+          onTap: () => Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => LoginPage()),
+          ),
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -632,7 +640,9 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => Navigator.of(context).pushReplacementNamed('/login'),
+          onTap: () => Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => LoginPage()),
+          ),
           borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.all(8),
@@ -687,7 +697,7 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
               ),
               child: const Icon(Icons.dashboard_rounded, size: 24),
             ),
-            label: 'Tableau',
+            label: 'Acceuil',
           ),
           // Index 1 - Orders
           BottomNavigationBarItem(
@@ -758,6 +768,19 @@ class _OwnerMainLayoutState extends State<OwnerMainLayout> {
               child: const Icon(Icons.analytics_rounded, size: 24),
             ),
             label: 'Stats',
+          ),
+          BottomNavigationBarItem(
+            icon: Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: _selectedIndex == 6
+                    ? AppColors.primary.withOpacity(0.15)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.person, size: 24),
+            ),
+            label: 'Profile',
           ),
         ],
       ),

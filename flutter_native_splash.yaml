@@ -1,0 +1,7 @@
+flutter_native_splash:
+  color: "#FFFFFF"
+  color_dark: "#1F2937"
+  image: lib/core/assets/jibli_logo.png
+  android: true
+  ios: true
+  web: false

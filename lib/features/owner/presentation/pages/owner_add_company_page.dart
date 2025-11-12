@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/company_service.dart';
 import '../../../../core/services/attachment_service.dart';
+import '../../../../core/services/auth_service.dart';
 import 'package:universal_html/html.dart' as html;
 
 class AddCompanyPage {
@@ -43,6 +44,7 @@ class AddCompanyDialog extends StatefulWidget {
 class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerProviderStateMixin {
   final CompanyService _companyService = CompanyService();
   final AttachmentService _attachmentService = AttachmentService();
+  final AuthService _authService = AuthService();
   final ImagePicker _imagePicker = ImagePicker();
 
   late TextEditingController _nameController;
@@ -54,6 +56,7 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
   late TextEditingController _emailController;
   late TextEditingController _timeOpenController;
   late TextEditingController _timeCloseController;
+  late TextEditingController _deliveryFeeController;
 
   List<Uint8List> _selectedImages = [];
   List<String> _selectedFileNames = [];
@@ -64,7 +67,7 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
 
   bool _isLoading = false;
   bool _isCustomSector = false;
-  static const int currentUserId = 2;
+  int? _currentUserId;
   late AnimationController _slideController;
 
   final List<String> _predefinedSectors = [
@@ -85,10 +88,18 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
     );
     _slideController.forward();
     _initializeControllers();
+    _loadCurrentUserId();
     if (widget.isEditing && widget.companyData != null) {
       _populateFields();
       _loadExistingImages();
     }
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
   }
 
   void _initializeControllers() {
@@ -101,6 +112,7 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
     _emailController = TextEditingController();
     _timeOpenController = TextEditingController();
     _timeCloseController = TextEditingController();
+    _deliveryFeeController = TextEditingController();
   }
 
   void _populateFields() {
@@ -131,6 +143,8 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
     if (timeClose != null) {
       _timeCloseController.text = timeClose.toString().substring(0, 5);
     }
+    
+    _deliveryFeeController.text = (company['deliveryFee'] ?? 0.0).toString();
   }
 
   Future<void> _loadExistingImages() async {
@@ -173,6 +187,7 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
     _emailController.dispose();
     _timeOpenController.dispose();
     _timeCloseController.dispose();
+    _deliveryFeeController.dispose();
     _slideController.dispose();
     super.dispose();
   }
@@ -256,8 +271,9 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
         'companyEmail': _emailController.text.trim(),
         'timeOpen': timeOpen,
         'timeClose': timeClose,
-        'userId': currentUserId,
-
+        'userId': _currentUserId,
+        'deliveryFee': double.tryParse(_deliveryFeeController.text.trim()) ?? 0.0,
+        'companyStatus':'INACTIVE'
       };
 
       debugPrint('Company Data: $companyData');
@@ -650,10 +666,11 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
     );
   }
 
-  Widget _buildCompactTextField(TextEditingController controller, String label, IconData icon, {int maxLines = 1}) {
+  Widget _buildCompactTextField(TextEditingController controller, String label, IconData icon, {int maxLines = 1, TextInputType? keyboardType}) {
     return TextFormField(
       controller: controller,
       maxLines: maxLines,
+      keyboardType: keyboardType,
       decoration: InputDecoration(
         labelText: label,
         prefixIcon: Icon(icon, color: AppColors.primary, size: 20),
@@ -700,6 +717,8 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
           _buildCompactTextField(_emailController, 'Email', Icons.email_rounded),
           const SizedBox(height: 12),
           _buildCompactTextField(_addressController, 'Adresse', Icons.location_on_rounded),
+          const SizedBox(height: 12),
+          _buildCompactTextField(_deliveryFeeController, 'Frais de livraison (DT)', Icons.local_shipping_rounded, keyboardType: TextInputType.number),
         ],
       ),
     );
@@ -841,12 +860,5 @@ class _AddCompanyDialogState extends State<AddCompanyDialog> with SingleTickerPr
       ),
     );
   }
-
-
-
-
-
-
-
 
 }

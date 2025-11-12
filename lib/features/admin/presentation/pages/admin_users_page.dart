@@ -3,6 +3,7 @@ import '../../../../core/services/pagination_service.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/user_service.dart';
 import 'admin_user_details_page.dart';
+import '../widgets/add_user_dialog.dart';
 
 class AdminUsersPage extends StatefulWidget {
   const AdminUsersPage({super.key});
@@ -12,7 +13,7 @@ class AdminUsersPage extends StatefulWidget {
 }
 
 class _AdminUsersPageState extends State<AdminUsersPage> {
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
   final PaginationService _paginationService = PaginationService(itemsPerPage: 10);
 
   List<Map<String, dynamic>> _users = [];
@@ -24,8 +25,8 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
 
   final TextEditingController _searchController = TextEditingController();
 
-  final List<String> _roles = ['Tous', 'CUSTOMER', 'OWNER', 'DELIVERY', 'ADMIN'];
-  final List<String> _statuses = ['Tous', 'ACTIVE', 'INACTIVE', 'BLOCKED'];
+  final List<String> _roles = ['Tous', 'Customer', 'Owner', 'Delivery', 'ADMIN'];
+  final List<String> _statuses = ['Tous', 'ACTIVE', 'INACTIVE', 'BANNED'];
 
   @override
   void initState() {
@@ -133,57 +134,161 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Gestion des Utilisateurs',
-          style: TextStyle(
-            fontSize: isMobile ? 28 : 32,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF1F2937),
-            letterSpacing: -0.5,
-          ),
-        ),
-        const SizedBox(height: 8),
+        // Main Title with Icon
         Row(
           children: [
-            Text(
-              'Gérez tous les utilisateurs',
-              style: TextStyle(
-                fontSize: isMobile ? 14 : 15,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const Spacer(),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
+                  colors: [
+                    AppColors.primary.withOpacity(0.15),
+                    AppColors.primary.withOpacity(0.08),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.2),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                  color: AppColors.primary.withOpacity(0.2),
+                  width: 1.5,
+                ),
+              ),
+              child: Icon(
+                Icons.people_alt_rounded,
+                color: AppColors.primary,
+                size: isMobile ? 24 : 28,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Gestion des Utilisateurs',
+                    style: TextStyle(
+                      fontSize: isMobile ? 26 : 32,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF1F2937),
+                      letterSpacing: -0.5,
+                      height: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    height: 3,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          AppColors.primary,
+                          AppColors.primary.withOpacity(0.4),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ],
               ),
-              child: Text(
-                '${_filteredUsers.length} utilisateurs',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        // Subtitle and Stats Row
+        Row(
+          children: [
+            // Subtitle
+            Expanded(
+              child: Row(
+                children: [
+                  Container(
+                    width: 4,
+                    height: 20,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+            // User Count Badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.primary.withOpacity(0.95),
+                    AppColors.primary.withOpacity(0.75),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.3),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.25),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.25),
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: const Icon(
+                      Icons.people_rounded,
+                      color: Colors.white,
+                      size: 15,
+                    ),
+                  ),
+                  const SizedBox(width: 9),
+                  Text(
+                    '${_filteredUsers.length} utilisateurs',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Add User Button
+            ElevatedButton(
+              onPressed: () => showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => AddUserDialog(
+                  onUserAdded: _loadUsers,
                 ),
               ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                elevation: 0,
+                shadowColor: AppColors.primary.withOpacity(0.3),
+              ),
+              child: const Icon(Icons.add_rounded, size: 20),
             ),
           ],
         ),
       ],
     );
   }
-
   Widget _buildFilters(bool isMobile, bool isTablet) {
     return Column(
       children: [
@@ -817,12 +922,12 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
   Color _getRoleColor(String? role) {
     switch (role) {
       case 'ADMIN':
-        return Colors.red;
-      case 'OWNER':
+        return Colors.brown;
+      case 'Owner':
         return Colors.blue;
-      case 'DELIVERY':
+      case 'Delivery':
         return Colors.orange;
-      case 'CUSTOMER':
+      case 'Customer':
         return Colors.green;
       default:
         return Colors.grey;
@@ -835,7 +940,7 @@ class _AdminUsersPageState extends State<AdminUsersPage> {
         return Colors.green;
       case 'INACTIVE':
         return Colors.orange;
-      case 'BLOCKED':
+      case 'BANNED':
         return Colors.red;
       default:
         return Colors.grey;

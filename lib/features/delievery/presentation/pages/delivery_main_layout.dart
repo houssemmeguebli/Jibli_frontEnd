@@ -19,8 +19,8 @@ class _DeliveryMainLayoutState extends State<DeliveryMainLayout> {
   final List<Widget> _pages = [
     const DeliveryDashboard(),
     const DeliveryOrdersPage(),
+    const DeliveryStatisticsPage(),
     const DeliveryProfilePage(),
-    const DeliveryStatisticsPage()
   ];
 
   final List<({IconData icon, String label, String route})> _menuItems = [
@@ -496,7 +496,7 @@ class _DeliveryMainLayoutState extends State<DeliveryMainLayout> {
           icon: Container(
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              color: _selectedIndex == 5
+              color: _selectedIndex == 2
                   ? AppColors.primary.withOpacity(0.15)
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(10),
@@ -509,7 +509,7 @@ class _DeliveryMainLayoutState extends State<DeliveryMainLayout> {
           icon: Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: _selectedIndex == 2 ? AppColors.primary.withOpacity(0.1) : Colors.transparent,
+              color: _selectedIndex == 3 ? AppColors.primary.withOpacity(0.1) : Colors.transparent,
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(Icons.person_rounded, size: 24),

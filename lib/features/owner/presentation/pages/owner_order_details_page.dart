@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
+import '../../../../Core/services/company_service.dart';
 import '../../../../Core/services/user_service.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../Core/services/order_item_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/product_service.dart';
 import '../../../../core/services/order_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class OwnerOrderDetailsDialog extends StatefulWidget {
   final Map<String, dynamic> order;
@@ -28,17 +30,22 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
   final AttachmentService _attachmentService = AttachmentService();
   final ProductService _productService = ProductService();
   final OrderService _orderService = OrderService();
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
+  final CompanyService _companyService = CompanyService();
+
   List<Map<String, dynamic>> _orderItems = [];
   Map<int, List<Uint8List>> _productImages = {};
   bool _isLoading = true;
   late String _orderStatus;
   late AnimationController _slideController;
   Map<String, dynamic>? _deliveryData;
+  Map<String, dynamic>? _companyInfo;
+  bool _isLoadingCompany = true;
 
   @override
   void initState() {
     _loadDeliveryInfo();
+    _loadCompanyInfo();
     super.initState();
     _orderStatus = widget.order['orderStatus'] ?? 'PENDING';
     _slideController = AnimationController(
@@ -70,51 +77,90 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
     }
   }
 
+  Future<void> _loadCompanyInfo() async {
+    try {
+      final companyId = widget.order['companyId'];
+      if (companyId != null) {
+        final company = await _companyService.getCompanyById(companyId);
+        if (mounted) {
+          setState(() {
+            _companyInfo = company;
+            _isLoadingCompany = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _isLoadingCompany = false);
+        }
+      }
+    } catch (e) {
+      print('Error loading company info: $e');
+      if (mounted) {
+        setState(() => _isLoadingCompany = false);
+      }
+    }
+  }
+
   Future<void> _loadOrderItems() async {
     try {
       final items = widget.order['orderItems'] as List<dynamic>? ?? [];
-
-      for (var item in items) {
-        final product = item['productDetails'] as Map<String, dynamic>?;
-        if (product != null) {
-          await _loadProductImages(product);
-        }
-      }
-
+      
       setState(() {
         _orderItems = List<Map<String, dynamic>>.from(items);
         _isLoading = false;
       });
+
+      // Load images after order items are set
+      await _loadProductImages();
     } catch (e) {
       setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _loadProductImages(Map<String, dynamic> product) async {
+  Future<void> _loadProductImages() async {
     try {
-      final productId = product['productId'];
-      final attachments = product['attachments'] as List<dynamic>? ?? [];
-      final List<Uint8List> images = [];
+      final Map<int, List<Uint8List>> images = {};
 
-      for (var attach in attachments) {
+      for (var item in _orderItems) {
+        final product = item['productDetails'] as Map<String, dynamic>?;
+        if (product == null) continue;
+
+        final productId = product['productId'] as int?;
+        if (productId == null) continue;
+
         try {
-          final attachmentDownload =
-          await _attachmentService.downloadAttachment(
-            attach['attachmentId'],
-          );
-          images.add(attachmentDownload.data);
+          final attachments = await _attachmentService.findByProductProductId(productId);
+          final List<Uint8List> productImages = [];
+
+          for (var attachment in attachments) {
+            try {
+              final attachmentId = int.parse(attachment['attachmentId'].toString());
+              final attachmentDownload = await _attachmentService.downloadAttachment(attachmentId);
+              if (attachmentDownload.data.isNotEmpty) {
+                productImages.add(attachmentDownload.data);
+              }
+            } catch (e) {
+              debugPrint('⚠️ Error loading image for attachment: $e');
+              continue;
+            }
+          }
+
+          if (productImages.isNotEmpty) {
+            images[productId] = productImages;
+          }
         } catch (e) {
-          images.add(Uint8List.fromList([]));
+          debugPrint('⚠️ Error loading images for product $productId: $e');
+          continue;
         }
       }
 
       if (mounted) {
         setState(() {
-          _productImages[productId] = images;
+          _productImages = images;
         });
       }
     } catch (e) {
-      print('Error loading product images: $e');
+      debugPrint('❌ Error loading product images: $e');
     }
   }
 
@@ -303,6 +349,8 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
                         _buildOrderHeader(),
                         const SizedBox(height: 20),
                         _buildCustomerInfo(),
+                        const SizedBox(height: 20),
+                        _buildCompanyInfo(),
                         const SizedBox(height: 20),
                         _buildDeliveryInfo(),
                         const SizedBox(height: 20),
@@ -584,6 +632,131 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
             label: 'Téléphone',
             value: widget.order['customerPhone'] ?? 'N/A',
           ),
+          const SizedBox(height: 12),
+          _buildAddressRowWithMap(
+            address: widget.order['customerAddress'] ?? 'N/A',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompanyInfo() {
+    if (_isLoadingCompany) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(
+                  Icons.business_outlined,
+                  color: Colors.blue,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Informations Entreprise',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (_companyInfo != null) ...[
+            _buildInfoRow(
+              icon: Icons.business_outlined,
+              label: 'Nom de l\'entreprise',
+              value: _companyInfo!['companyName'] ?? 'N/A',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.email_outlined,
+              label: 'Email',
+              value: _companyInfo!['companyEmail'] ?? 'N/A',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.phone_outlined,
+              label: 'Téléphone',
+              value: _companyInfo!['companyPhone'] ?? 'N/A',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.location_on_outlined,
+              label: 'Adresse',
+              value: _companyInfo!['companyAddress'] ?? 'N/A',
+            ),
+          ] else
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: Colors.grey[300]!,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    color: Colors.grey[600],
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Informations de l\'entreprise non disponibles',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -826,11 +999,11 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => _updateOrderStatus('WAITING'),
-                icon: const Icon(Icons.check_circle, size: 18),
-                label: const Text('Prêt pour livraison'),
+                onPressed: _assignDelivery,
+                icon: const Icon(Icons.person_add, size: 18),
+                label: const Text('Assigner un livreur'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
+                  backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
@@ -1136,8 +1309,10 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
   }
 
   Widget _buildSummary() {
-    final revenue = widget.order['ownerRevenue'] ?? 0.0;
+    final revenue = widget.order['totalAmount'] ?? 0.0;
     final itemCount = widget.order['ownerItemCount'] ?? 0;
+    final deliveryFee = widget.order['deliveryFee'] ?? 0.0;
+    final finalRevenue = revenue + deliveryFee;
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -1186,11 +1361,28 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
             isTotal: false,
           ),
           const SizedBox(height: 12),
+          _buildSummaryRow(
+            'Prix des articles',
+            '${revenue.toStringAsFixed(2)} DT',
+            isTotal: false,
+          ),
+          const SizedBox(height: 12),
+          _buildSummaryRow(
+            'Frais de livraison',
+            '${deliveryFee.toStringAsFixed(2)} DT',
+            isTotal: false,
+          ),
+          const SizedBox(height: 12),
+          _buildSummaryRow(
+            'Frais de service',
+            '${0.00} DT',
+            isTotal: false,
+          ),
           Divider(color: Colors.grey[300]),
           const SizedBox(height: 12),
           _buildSummaryRow(
             'Total des revenus',
-            '${revenue.toStringAsFixed(2)} DT',
+            '${finalRevenue.toStringAsFixed(2)} DT',
             isTotal: true,
           ),
         ],
@@ -1666,17 +1858,18 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
   Widget _buildDeliverySelectionDialog(List<Map<String, dynamic>> deliveryUsers) {
     final screenSize = MediaQuery.of(context).size;
     final isMobile = screenSize.width < 600;
+    final isTablet = screenSize.width >= 600 && screenSize.width < 1024;
     
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       insetPadding: EdgeInsets.symmetric(
-        horizontal: isMobile ? 16 : 40,
+        horizontal: isMobile ? 16 : (isTablet ? 40 : 80),
         vertical: isMobile ? 20 : 40,
       ),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: isMobile ? double.infinity : 600,
-          maxHeight: screenSize.height * 0.8,
+          maxWidth: isMobile ? double.infinity : (isTablet ? 600 : 700),
+          maxHeight: screenSize.height * (isMobile ? 0.9 : 0.85),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1691,60 +1884,291 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
                 ),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: const Icon(
-                      Icons.delivery_dining_rounded,
-                      color: Colors.white,
-                      size: 28,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Réassigner un Livreur',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: isMobile ? 18 : 20,
-                            fontWeight: FontWeight.bold,
-                          ),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withOpacity(0.3)),
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Commande #${widget.order['orderId']}',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 13,
-                          ),
+                        child: Icon(
+                          Icons.delivery_dining_rounded,
+                          color: Colors.white,
+                          size: isMobile ? 26 : 30,
                         ),
-                      ],
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Sélectionner un Livreur',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: isMobile ? 20 : 22,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Commande #${widget.order['orderId']} • ${deliveryUsers.length} livreurs disponibles',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: isMobile ? 13 : 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded, color: Colors.white),
+                        iconSize: 24,
+                        padding: const EdgeInsets.all(8),
+                      ),
+                    ],
+                  ),
+                  if (!isMobile) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.white.withOpacity(0.9), size: 16),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Livreurs triés par note et disponibilité',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded, color: Colors.white),
-                  ),
+                  ],
                 ],
               ),
             ),
             Flexible(
-              child: ListView.separated(
-                padding: EdgeInsets.all(isMobile ? 16 : 20),
-                itemCount: deliveryUsers.length,
-                separatorBuilder: (context, index) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final user = deliveryUsers[index];
-                  return _buildDeliveryCard(user, isMobile);
-                },
+              child: deliveryUsers.isEmpty
+                  ? _buildEmptyDeliveryState(isMobile)
+                  : ListView.separated(
+                      padding: EdgeInsets.all(isMobile ? 16 : 20),
+                      itemCount: deliveryUsers.length,
+                      separatorBuilder: (context, index) => SizedBox(height: isMobile ? 12 : 16),
+                      itemBuilder: (context, index) {
+                        final user = deliveryUsers[index];
+                        return _buildDeliveryPersonCard(context, user, isMobile);
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeliveryPersonCard(BuildContext context, Map<String, dynamic> user, bool isMobile) {
+    final fullName = user['fullName'] ?? 'Livreur';
+    final email = user['email'] ?? 'Email non disponible';
+    final phone = user['phoneNumber'] ?? 'Non spécifié';
+    final isAvailable = user['available'] ?? false;
+    final rating = (user['rating'] ?? 4.5).toDouble();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isAvailable 
+              ? AppColors.primary.withOpacity(0.3) 
+              : Colors.grey[300]!,
+          width: isAvailable ? 2 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isAvailable
+                ? AppColors.primary.withOpacity(0.1)
+                : Colors.black.withOpacity(0.05),
+            blurRadius: isAvailable ? 16 : 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(isMobile ? 16 : 20),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: isMobile ? 60 : 70,
+                  height: isMobile ? 60 : 70,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: isAvailable
+                          ? [AppColors.primary.withOpacity(0.8), AppColors.primary.withOpacity(0.6)]
+                          : [Colors.grey[400]!, Colors.grey[300]!],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isAvailable ? Colors.white : Colors.grey[200]!,
+                      width: 2,
+                    ),
+                  ),
+                  child: Stack(
+                    children: [
+                      Center(
+                        child: Icon(
+                          Icons.delivery_dining_rounded,
+                          color: Colors.white,
+                          size: isMobile ? 28 : 32,
+                        ),
+                      ),
+                      if (isAvailable)
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: Colors.green,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              fullName,
+                              style: TextStyle(
+                                fontSize: isMobile ? 16 : 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: isAvailable 
+                                  ? Colors.green.withOpacity(0.15) 
+                                  : Colors.red.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    color: isAvailable ? Colors.green : Colors.red,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  isAvailable ? 'Disponible' : 'Occupé',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: isAvailable ? Colors.green : Colors.red,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildContactItem(
+                    icon: Icons.email_outlined,
+                    label: 'Email',
+                    value: email,
+                    color: Colors.blue,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildContactItem(
+                    icon: Icons.phone_outlined,
+                    label: 'Téléphone',
+                    value: phone,
+                    color: Colors.green,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: isAvailable 
+                    ? () => Navigator.pop(context, user)
+                    : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isAvailable ? AppColors.primary : Colors.grey[300],
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: isMobile ? 12 : 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: isAvailable ? 2 : 0,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isAvailable ? Icons.check_circle_outline : Icons.block,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      isAvailable ? 'Assigner ce livreur' : 'Non disponible',
+                      style: TextStyle(
+                        fontSize: isMobile ? 14 : 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1753,118 +2177,279 @@ class _OwnerOrderDetailsDialogState extends State<OwnerOrderDetailsDialog>
     );
   }
 
-  Widget _buildDeliveryCard(Map<String, dynamic> user, bool isMobile) {
-    final fullName = user['fullName'] ?? 'Livreur';
-    final rating = (user['rating'] ?? 4.5).toDouble();
-    final isAvailable = user['available'] ?? false;
-    
+  Widget _buildContactItem({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
     return Container(
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: isAvailable ? AppColors.primary.withOpacity(0.3) : Colors.grey[300]!,
-          width: isAvailable ? 2 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Colors.black87,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildEmptyDeliveryState(bool isMobile) {
+    return Center(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(isMobile ? 24 : 32),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [AppColors.primary, AppColors.primary.withOpacity(0.7)],
-                    ),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.delivery_dining_rounded,
-                    color: Colors.white,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        fullName,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Row(
-                        children: [
-                          Icon(Icons.star, size: 16, color: Colors.amber[600]),
-                          const SizedBox(width: 4),
-                          Text(
-                            rating.toStringAsFixed(1),
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isAvailable ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isAvailable ? 'Disponible' : 'Occupé',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isAvailable ? Colors.green : Colors.red,
-                    ),
-                  ),
-                ),
-              ],
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.delivery_dining_outlined,
+                size: isMobile ? 48 : 64,
+                color: Colors.grey[400],
+              ),
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: isAvailable ? () => Navigator.pop(context, user) : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isAvailable ? AppColors.primary : Colors.grey[300],
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Text(
-                  isAvailable ? 'Assigner' : 'Non disponible',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+            const SizedBox(height: 16),
+            Text(
+              'Aucun livreur disponible',
+              style: TextStyle(
+                fontSize: isMobile ? 16 : 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Tous les livreurs sont actuellement occupés.\nVeuillez réessayer plus tard.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[500],
               ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildAddressRowWithMap({required String address}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.location_on,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Adresse de Livraison',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      address,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _openLocationViewer(address),
+              icon: const Icon(Icons.map_rounded, size: 18),
+              label: const Text('Voir dans Google Maps'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openLocationViewer(String address) async {
+    // Get coordinates from order backend data
+    double? lat;
+    double? lng;
+
+    try {
+      // Extract latitude from order
+      final latValue = widget.order['latitude'];
+      if (latValue != null) {
+        if (latValue is double) {
+          lat = latValue;
+        } else if (latValue is int) {
+          lat = latValue.toDouble();
+        } else if (latValue is String) {
+          lat = double.tryParse(latValue);
+        }
+      }
+
+      // Extract longitude from order
+      final lngValue = widget.order['longitude'];
+      if (lngValue != null) {
+        if (lngValue is double) {
+          lng = lngValue;
+        } else if (lngValue is int) {
+          lng = lngValue.toDouble();
+        } else if (lngValue is String) {
+          lng = double.tryParse(lngValue);
+        }
+      }
+
+      // Check if coordinates are valid
+      if (lat == null || lng == null) {
+        _showSnackBar('Coordonnées non disponibles pour cette livraison', isError: true);
+        debugPrint('❌ Missing coordinates - lat: $lat, lng: $lng');
+        return;
+      }
+
+      debugPrint('📍 Opening maps with backend coordinates: lat=$lat, lng=$lng');
+    } catch (e) {
+      debugPrint('❌ Error parsing coordinates: $e');
+      _showSnackBar('Erreur lors de la lecture des coordonnées', isError: true);
+      return;
+    }
+
+    await _openInGoogleMaps(lat!, lng!, address);
+  }
+
+  Future<void> _openInGoogleMaps(double lat, double lng, String address) async {
+    try {
+      debugPrint('🗺️ Attempting to open Google Maps with lat: $lat, lng: $lng');
+
+      // Encode address for URL
+      final encodedAddress = Uri.encodeComponent(address);
+
+      // Try different URL schemes in order of preference
+      final urls = [
+        // Google Maps web URL (should work on all platforms)
+        'https://www.google.com/maps/?q=$lat,$lng',
+        // Google Maps API URL
+        'https://maps.google.com/?q=$lat,$lng',
+        // Google Maps with address
+        'https://www.google.com/maps/search/$encodedAddress/@$lat,$lng,17z',
+        // Apple Maps fallback
+        'https://maps.apple.com/?q=$lat,$lng',
+      ];
+
+      bool opened = false;
+
+      for (String urlString in urls) {
+        try {
+          debugPrint('🔄 Trying URL: $urlString');
+          final uri = Uri.parse(urlString);
+
+          if (await canLaunchUrl(uri)) {
+            debugPrint('✅ URL is supported, launching: $urlString');
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+            opened = true;
+            break;
+          } else {
+            debugPrint('⚠️ canLaunchUrl returned false for: $urlString');
+          }
+        } catch (e) {
+          debugPrint('❌ Error with URL $urlString: $e');
+          continue;
+        }
+      }
+
+      if (!opened) {
+        debugPrint('❌ No URL schemes worked, trying direct launch...');
+        // Last resort: try launching directly
+        try {
+          final fallbackUrl = Uri.parse('https://www.google.com/maps/?q=$lat,$lng');
+          await launchUrl(fallbackUrl);
+          opened = true;
+        } catch (e) {
+          debugPrint('❌ Fallback also failed: $e');
+        }
+      }
+
+      if (!opened) {
+        _showSnackBar('Impossible d\'ouvrir Google Maps. Vérifiez votre connexion Internet.', isError: true);
+        debugPrint('❌ All attempts failed');
+      }
+    } catch (e) {
+      debugPrint('❌ Error in _openInGoogleMaps: $e');
+      _showSnackBar('Erreur: ${e.toString()}', isError: true);
+    }
   }
 
   String _formatDate(dynamic date) {

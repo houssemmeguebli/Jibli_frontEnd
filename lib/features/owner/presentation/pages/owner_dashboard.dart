@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:frontend/features/owner/presentation/pages/add_product_page.dart';
 import 'package:frontend/features/owner/presentation/pages/owner_products_page.dart';
 import 'dart:typed_data';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/product_service.dart';
 import '../../../../core/services/attachment_service.dart';
+import '../../../../core/services/auth_service.dart';
 import '../widgets/owner_dashboard_card.dart';
 import 'owner_add_product_page.dart';
 import 'owner_details_product_page.dart';
@@ -20,12 +22,13 @@ class _OwnerDashboardState extends State<OwnerDashboard>
     with SingleTickerProviderStateMixin {
   final ProductService _productService = ProductService();
   final AttachmentService _attachmentService = AttachmentService();
+  final AuthService _authService = AuthService();
   List<Map<String, dynamic>> _products = [];
   bool _isLoading = true;
-  static const int currentUserId = 2;
+  int? _currentUserId;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
-  final Map<int, Uint8List> _imageCache = {};
+  Map<int, Uint8List> _imageCache = {};
 
   @override
   void initState() {
@@ -38,6 +41,14 @@ class _OwnerDashboardState extends State<OwnerDashboard>
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
     _animationController.forward();
+    _loadCurrentUserId();
+  }
+
+  Future<void> _loadCurrentUserId() async {
+    final userId = await _authService.getUserId();
+    setState(() {
+      _currentUserId = userId;
+    });
     _loadProducts();
   }
 
@@ -49,27 +60,27 @@ class _OwnerDashboardState extends State<OwnerDashboard>
 
   Future<void> _loadProducts() async {
     try {
-      final products =
-      await _productService.getProductByUserId(currentUserId);
-      setState(() {
-        _products = List<Map<String, dynamic>>.from(products);
-        _isLoading = false;
-      });
-
-      for (int i = 0; i < (_products.length > 5 ? 5 : _products.length); i++) {
-        final product = _products[i];
-        final attachments = product['attachments'] as List<dynamic>?;
-        if (attachments != null && attachments.isNotEmpty) {
-          final firstAttachmentId = attachments[0]['attachmentId'] as int;
-          if (!_imageCache.containsKey(firstAttachmentId)) {
-            _preloadImage(firstAttachmentId);
-          }
-        }
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
       }
+      final products =
+      await _productService.getProductByUserId(_currentUserId!);
+      if (mounted) {
+        setState(() {
+          _products = List<Map<String, dynamic>>.from(products);
+          _isLoading = false;
+        });
+      }
+
+      // REPLACE the old for loop with this:
+      await _loadProductImages();
+
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -83,24 +94,50 @@ class _OwnerDashboardState extends State<OwnerDashboard>
       }
     }
   }
-
-  Future<void> _preloadImage(int attachmentId) async {
+  Future<void> _loadProductImages() async {
     try {
-      final bytes = await _attachmentService.downloadAttachment(attachmentId);
+      final Map<int, Uint8List> images = {};
+
+      for (var product in _products) {
+        final productId = product['productId'] as int?;
+        if (productId == null) continue;
+
+        try {
+          final attachments = await _attachmentService.findByProductProductId(productId);
+          if (attachments.isNotEmpty) {
+            final firstAttachment = attachments.first as Map<String, dynamic>;
+            final attachmentId = firstAttachment['attachmentId'] as int?;
+
+            if (attachmentId != null) {
+              final attachmentDownload = await _attachmentService.downloadAttachment(attachmentId);
+              if (attachmentDownload.data.isNotEmpty) {
+                images[productId] = attachmentDownload.data;
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error loading image for product $productId: $e');
+          continue;
+        }
+      }
+
       if (mounted) {
         setState(() {
-          _imageCache[attachmentId] = bytes as Uint8List;
+          _imageCache = images;
         });
       }
     } catch (e) {
-      // Silently fail
+      debugPrint('❌ Error loading product images: $e');
     }
   }
 
+
   Future<void> _refresh() async {
-    setState(() => _isLoading = true);
-    _imageCache.clear();
-    await _loadProducts();
+    if (mounted) {
+      setState(() => _isLoading = true);
+      _imageCache.clear();
+      await _loadCurrentUserId();
+    }
   }
 
   @override
@@ -138,11 +175,19 @@ class _OwnerDashboardState extends State<OwnerDashboard>
                 ),
               ),
               _isLoading
-                  ? const SliverFillRemaining(
-                child: Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation(AppColors.primary),
+                  ? SliverPadding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 16 : isTablet ? 24 : 32,
+                ),
+                sliver: SliverToBoxAdapter(
+                  child: Skeletonizer(
+                    enabled: true,
+                    child: Column(
+                      children: List.generate(
+                        5,
+                        (index) => _buildSkeletonProductCard(isMobile),
+                      ),
+                    ),
                   ),
                 ),
               )
@@ -176,7 +221,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
 
   Widget _buildSliverAppBar(bool isMobile) {
     return SliverAppBar(
-      expandedHeight: isMobile ? 120 : 140,
+      expandedHeight: isMobile ? 80 : 120,
       floating: true,
       pinned: true,
       elevation: 0,
@@ -342,7 +387,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Container(
-                          padding: EdgeInsets.all(isMobile ? 8 : 10),
+                          padding: EdgeInsets.all(isMobile ? 4 : 10),
                           decoration: BoxDecoration(
                             color: color.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(10),
@@ -361,7 +406,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
                               Text(
                                 value,
                                 style: TextStyle(
-                                  fontSize: isMobile ? 18 : 22,
+                                  fontSize: isMobile ? 14 : 22,
                                   fontWeight: FontWeight.w800,
                                   color: const Color(0xFF1F2937),
                                   letterSpacing: -0.5,
@@ -373,7 +418,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
                               Text(
                                 title,
                                 style: TextStyle(
-                                  fontSize: isMobile ? 11 : 12,
+                                  fontSize: isMobile ? 9 : 12,
                                   fontWeight: FontWeight.w600,
                                   color: Colors.grey[600],
                                   letterSpacing: 0.1,
@@ -559,9 +604,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
       BuildContext context) {
     final int productId = product['productId'] ?? 0;
     final attachments = product['attachments'] as List<dynamic>?;
-    final int? firstAttachmentId = attachments != null && attachments.isNotEmpty
-        ? attachments[0]['attachmentId'] as int
-        : null;
+
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
@@ -604,11 +647,11 @@ class _OwnerDashboardState extends State<OwnerDashboard>
                     }
                   },
                   child: Padding(
-                    padding: EdgeInsets.all(isMobile ? 14 : 18),
+                    padding: EdgeInsets.all(isMobile ? 12 : 18),
                     child: Row(
                       children: [
-                        _buildProductImage(firstAttachmentId, isMobile),
-                        const SizedBox(width: 16),
+                        _buildProductImage(productId, isMobile),
+                        const SizedBox(width: 14),
                         Expanded(
                           child: _buildProductInfo(product, isMobile),
                         ),
@@ -626,7 +669,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
     );
   }
 
-  Widget _buildProductImage(int? firstAttachmentId, bool isMobile) {
+  Widget _buildProductImage(int productId, bool isMobile) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: Container(
@@ -641,48 +684,19 @@ class _OwnerDashboardState extends State<OwnerDashboard>
           ),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: firstAttachmentId == null
-            ? Icon(
+        child: _imageCache.containsKey(productId)
+            ? Image.memory(
+          _imageCache[productId]!,
+          fit: BoxFit.cover,
+        )
+            : Icon(
           Icons.inventory_2_rounded,
           color: AppColors.primary,
           size: isMobile ? 32 : 40,
-        )
-            : _imageCache.containsKey(firstAttachmentId)
-            ? Image.memory(
-          _imageCache[firstAttachmentId]!,
-          fit: BoxFit.cover,
-        )
-            : FutureBuilder<Uint8List>(
-          future: _attachmentService
-              .downloadAttachment(firstAttachmentId)
-              .then((download) => download.data),
-          builder: (context, snapshot) {
-            if (snapshot.hasData) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) {
-                  setState(() {
-                    _imageCache[firstAttachmentId] = snapshot.data!;
-                  });
-                }
-              });
-              return Image.memory(
-                snapshot.data!,
-                fit: BoxFit.cover,
-              );
-            } else if (snapshot.hasError) {
-              return Icon(
-                Icons.broken_image,
-                color: Colors.grey.shade400,
-                size: isMobile ? 32 : 40,
-              );
-            }
-            return const SizedBox.shrink();
-          },
         ),
       ),
     );
   }
-
   Widget _buildProductInfo(Map<String, dynamic> product, bool isMobile) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -733,13 +747,13 @@ class _OwnerDashboardState extends State<OwnerDashboard>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Icon(Icons.local_fire_department,
-                        size: 12, color: Color(0xFFF59E0B)),
+                        size: 8, color: Color(0xFFF59E0B)),
                     const SizedBox(width: 4),
                     Text(
                       '-${product['discountPercentage']}%',
                       style: const TextStyle(
                         color: Color(0xFFF59E0B),
-                        fontSize: 12,
+                        fontSize: 10,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -802,6 +816,87 @@ class _OwnerDashboardState extends State<OwnerDashboard>
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildSkeletonProductCard(bool isMobile) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: Colors.grey[200]!,
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: EdgeInsets.all(isMobile ? 12 : 18),
+        child: Row(
+          children: [
+            Container(
+              width: isMobile ? 70 : 90,
+              height: isMobile ? 70 : 90,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    height: isMobile ? 16 : 18,
+                    color: Colors.grey[300],
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 100,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity * 0.8,
+                    height: isMobile ? 12 : 13,
+                    color: Colors.grey[300],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Container(
+                  width: 80,
+                  height: isMobile ? 17 : 19,
+                  color: Colors.grey[300],
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  width: 60,
+                  height: 12,
+                  color: Colors.grey[300],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -33,6 +33,7 @@ class ProductCard extends StatefulWidget {
 class _ProductCardState extends State<ProductCard> with SingleTickerProviderStateMixin {
   bool _isPressed = false;
   bool _isHovered = false;
+  bool _isFavorite = false;
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
   late Animation<double> _elevationAnimation;
@@ -41,14 +42,14 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _controller = AnimationController(
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 250),
       vsync: this,
     );
     _scaleAnimation = Tween<double>(begin: 1.0, end: 0.96).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
     );
-    _elevationAnimation = Tween<double>(begin: 0.0, end: 8.0).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    _elevationAnimation = Tween<double>(begin: 0.0, end: 10.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic),
     );
   }
 
@@ -73,10 +74,15 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
     _controller.reverse();
   }
 
+  void _toggleFavorite() {
+    setState(() => _isFavorite = !_isFavorite);
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayPrice = widget.finalPrice ?? widget.price;
     final hasDiscount = widget.discount > 0;
+    final isMobile = MediaQuery.of(context).size.width < 600;
 
     return ScaleTransition(
       scale: _scaleAnimation,
@@ -85,64 +91,120 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
         onTapDown: _handleTapDown,
         onTapUp: _handleTapUp,
         onTapCancel: _handleTapCancel,
-        onLongPress: () {
-          setState(() => _isHovered = true);
-        },
         child: MouseRegion(
           onEnter: (_) => setState(() => _isHovered = true),
           onExit: (_) => setState(() => _isHovered = false),
-          child: AnimatedBuilder(
-            animation: _elevationAnimation,
-            builder: (context, child) {
-              return Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(_isHovered ? 0.12 : 0.06),
-                      blurRadius: _isHovered ? 20 : 12,
-                      offset: Offset(0, _isHovered ? 8 : 4),
-                      spreadRadius: _isHovered ? 2 : 0,
-                    ),
-                  ],
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(_isHovered ? 0.16 : 0.06),
+                  blurRadius: _isHovered ? 24 : 12,
+                  offset: Offset(0, _isHovered ? 10 : 4),
+                  spreadRadius: _isHovered ? 2 : 0,
                 ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        flex: 4,
-                        child: Stack(
-                          children: [
-                            _buildImage(),
-                            _buildGradientOverlay(),
-                            _buildBadgesContainer(hasDiscount),
-                            if (_isHovered) _buildHoverOverlay(),
-                          ],
-                        ),
+                if (_isHovered)
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.03),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Image Section
+                  Expanded(
+                    flex: 5,
+                    child: Stack(
+                      children: [
+                        _buildImage(),
+                        _buildGradientOverlay(),
+                        _buildStatusBadges(hasDiscount),
+                        if (_isHovered && widget.onTap != null)
+                          _buildHoverOverlay(),
+                        // Availability Overlay
+                        if (!widget.isAvailable)
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.45),
+                              ),
+                              child: Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.2),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        Icons.lock_outline_rounded,
+                                        size: 32,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      'Épuisé',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        shadows: [
+                                          Shadow(
+                                            color: Colors.black.withOpacity(0.4),
+                                            blurRadius: 3,
+                                          )
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // Content Section
+                  Expanded(
+                    flex: 4,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 13,
+                        vertical: 11,
                       ),
-                      Expanded(
-                        flex: 3,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          child: Column(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          // Product Name & Rating
+                          Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               _buildProductName(),
-                              _buildPriceSection(displayPrice, hasDiscount),
-                              if (widget.onAddToCart != null) _buildAddToCartButton(),
                             ],
                           ),
-                        ),
+                          // Price Section
+                          _buildPriceSection(displayPrice, hasDiscount),
+                          // Add to Cart Button
+                          if (widget.onAddToCart != null)
+                            _buildAddToCartButton(),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              );
-            },
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -150,22 +212,19 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
   }
 
   Widget _buildImage() {
-    return ClipRRect(
-      borderRadius: BorderRadius.zero,
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppColors.primary.withOpacity(0.08),
-              Colors.grey[100]!,
-            ],
-          ),
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withOpacity(0.07),
+            Colors.grey[100]!,
+          ],
         ),
-        child: _buildImageContent(),
       ),
+      child: _buildImageContent(),
     );
   }
 
@@ -198,9 +257,11 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
             return Center(
               child: CircularProgressIndicator(
                 value: loadingProgress.expectedTotalBytes != null
-                    ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                    ? loadingProgress.cumulativeBytesLoaded /
+                    loadingProgress.expectedTotalBytes!
                     : null,
-                color: AppColors.primary.withOpacity(0.6),
+                color: AppColors.primary.withOpacity(0.5),
+                strokeWidth: 2,
               ),
             );
           },
@@ -217,31 +278,21 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Colors.grey[100]!,
-            Colors.grey[50]!,
-          ],
+          colors: [Colors.grey[100]!, Colors.grey[50]!],
         ),
       ),
       child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.shopping_bag_outlined,
-              size: 56,
-              color: Colors.grey[300],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Pas d\'image',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[400],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Icon(
+            Icons.image_outlined,
+            size: 36,
+            color: Colors.grey[400],
+          ),
         ),
       ),
     );
@@ -256,7 +307,7 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
             end: Alignment.bottomCenter,
             colors: [
               Colors.transparent,
-              Colors.black.withOpacity(0.1),
+              Colors.black.withOpacity(0.06),
             ],
           ),
         ),
@@ -271,24 +322,59 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
           color: Colors.black.withOpacity(0.15),
         ),
         child: Center(
-          child: Icon(
-            Icons.zoom_in,
-            size: 48,
-            color: Colors.white.withOpacity(0.8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.12),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.visibility_rounded,
+                  size: 28,
+                  color: AppColors.primary,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Détails',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                  shadows: [
+                    Shadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 3,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildBadgesContainer(bool hasDiscount) {
+  Widget _buildStatusBadges(bool hasDiscount) {
     return Positioned(
-      top: 12,
-      right: 12,
+      top: 8,
+      left: 8,
+      right: 8,
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (widget.isAvailable && hasDiscount) _buildDiscountBadge(),
+          if (hasDiscount) _buildDiscountBadge(),
         ],
       ),
     );
@@ -299,16 +385,15 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            Colors.orange[500]!,
-            Colors.deepOrange[600]!,
-          ],
+          colors: [Colors.orange[500]!, Colors.orange[600]!],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: Colors.orange.withOpacity(0.4),
-            blurRadius: 6,
+            color: Colors.orange[400]!.withOpacity(0.35),
+            blurRadius: 8,
             offset: const Offset(0, 2),
           ),
         ],
@@ -316,14 +401,14 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.local_fire_department, size: 13, color: Colors.white),
+          const Icon(Icons.local_fire_department, size: 12, color: Colors.white),
           const SizedBox(width: 3),
           Text(
             '-${widget.discount.toStringAsFixed(0)}%',
             style: const TextStyle(
               fontSize: 11,
               color: Colors.white,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w800,
               letterSpacing: 0.2,
             ),
           ),
@@ -338,11 +423,11 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
       child: Text(
         widget.name,
         style: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w700,
-          height: 1.3,
-          color: Color(0xFF2D3436),
-          letterSpacing: 0.3,
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+          height: 1.2,
+          color: Color(0xFF1A1A1A),
+          letterSpacing: -0.2,
         ),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
@@ -361,53 +446,56 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
               Text(
                 '${widget.price.toStringAsFixed(2)} DT',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: Colors.grey[500],
                   decoration: TextDecoration.lineThrough,
-                  decorationColor: Colors.grey[500],
-                  decorationThickness: 2,
+                  decorationColor: Colors.grey[400],
+                  decorationThickness: 1.5,
                 ),
               ),
               const SizedBox(width: 5),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [Colors.orange[500]!, Colors.deepOrange[600]!],
+                    colors: [Colors.green[500]!, Colors.green[600]!],
                   ),
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(3),
                 ),
                 child: Text(
-                  '-${widget.discount.toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
+                  'Économisez',
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
                     color: Colors.white,
+                    letterSpacing: 0.1,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 5),
+          const SizedBox(height: 4),
         ],
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
           decoration: BoxDecoration(
             gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
               colors: [
                 hasDiscount
-                    ? const Color(0xFF00B894).withOpacity(0.12)
+                    ? const Color(0xFF00B894).withOpacity(0.11)
                     : AppColors.primary.withOpacity(0.08),
                 hasDiscount
                     ? const Color(0xFF00B894).withOpacity(0.05)
-                    : AppColors.primary.withOpacity(0.03),
+                    : AppColors.primary.withOpacity(0.04),
               ],
             ),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(9),
             border: Border.all(
               color: (hasDiscount ? const Color(0xFF00B894) : AppColors.primary)
-                  .withOpacity(0.15),
+                  .withOpacity(0.18),
               width: 1,
             ),
           ),
@@ -417,8 +505,8 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
               Text(
                 displayPrice.toStringAsFixed(2),
                 style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
                   color: hasDiscount ? const Color(0xFF00B894) : AppColors.primary,
                   letterSpacing: -0.3,
                 ),
@@ -427,9 +515,10 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
               Text(
                 'DT',
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
                   color: hasDiscount ? const Color(0xFF00B894) : AppColors.primary,
+                  letterSpacing: 0.1,
                 ),
               ),
             ],
@@ -444,8 +533,9 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
       color: Colors.transparent,
       child: InkWell(
         onTap: widget.isAvailable ? widget.onAddToCart : null,
-        borderRadius: BorderRadius.circular(12),
-        splashColor: AppColors.primary.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        splashColor: AppColors.primary.withOpacity(0.12),
+        highlightColor: AppColors.primary.withOpacity(0.08),
         child: Ink(
           decoration: BoxDecoration(
             gradient: widget.isAvailable
@@ -459,7 +549,7 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
             )
                 : null,
             color: widget.isAvailable ? null : Colors.grey[300],
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(10),
             boxShadow: widget.isAvailable
                 ? [
               BoxShadow(
@@ -471,25 +561,27 @@ class _ProductCardState extends State<ProductCard> with SingleTickerProviderStat
                 : null,
           ),
           child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Center(
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    widget.isAvailable ? Icons.add_shopping_cart : Icons.block,
-                    size: 15,
+                    widget.isAvailable
+                        ? Icons.add_shopping_cart_rounded
+                        : Icons.block_rounded,
+                    size: 14,
                     color: Colors.white,
                   ),
                   const SizedBox(width: 5),
                   Text(
                     widget.isAvailable ? 'Ajouter' : 'Épuisé',
                     style: const TextStyle(
-                      fontSize: 13,
+                      fontSize: 12,
                       color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.3,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.2,
                     ),
                   ),
                 ],

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/theme/theme.dart';
+import 'admin_notifications_page.dart';
 import 'admin_users_page.dart';
 import 'admin_companies_page.dart';
 import 'admin_reviews_page.dart';
@@ -34,6 +35,12 @@ class _AdminMainPageState extends State<AdminMainPage> {
       selectedIcon: Icons.business,
       title: 'Entreprises',
       page: const AdminCompaniesPage(),
+    ),
+    AdminMenuItem(
+      icon: Icons.notifications_outlined,
+      selectedIcon: Icons.notifications,
+      title: 'Annonces',
+      page: const AdminBroadcastPage(),
     ),
     AdminMenuItem(
       icon: Icons.rate_review_outlined,
@@ -130,7 +137,7 @@ class _AdminMainPageState extends State<AdminMainPage> {
                       itemBuilder: (context, index) {
                         final item = _menuItems[index];
                         final isSelected = _selectedIndex == index;
-                        
+
                         return Container(
                           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                           child: Material(

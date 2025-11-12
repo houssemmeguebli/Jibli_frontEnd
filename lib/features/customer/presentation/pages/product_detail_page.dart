@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:frontend/core/services/user_service.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import '../../../../core/services/cart_service.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/product_service.dart';
 import '../../../../core/services/cart_item_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/review_service.dart';
+import '../../../../core/services/cart_notifier.dart';
+import '../../../../core/services/auth_service.dart';
+import '../../../../Core/services/company_service.dart';
 import 'dart:typed_data';
-import 'cart_page.dart';
 
 class ProductDetailPage extends StatefulWidget {
   final int productId;
@@ -20,27 +23,29 @@ class ProductDetailPage extends StatefulWidget {
 
 class _ProductDetailPageState extends State<ProductDetailPage> with SingleTickerProviderStateMixin {
   final ProductService _productService = ProductService();
-  final CartItemService _cartItemService = CartItemService('http://192.168.1.216:8080');
+  final CartItemService _cartItemService = CartItemService();
   final AttachmentService _attachmentService = AttachmentService();
   final ReviewService _reviewService = ReviewService();
+  final CartNotifier _cartNotifier = CartNotifier();
+  final CompanyService _companyService = CompanyService();
   bool _isEditingReview = false;
 
   Map<String, dynamic>? _product;
+  Map<String, dynamic>? _companyInfo;
   List<Map<String, dynamic>> _reviews = [];
   List<Uint8List> _productImages = [];
   bool _isLoading = true;
   bool _isLoadingImages = true;
   bool _isLoadingReviews = false;
   int _quantity = 1;
-  int _cartItemCount = 0;
   int _selectedImageIndex = 0;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
 
-  final UserService _userService = UserService('http://192.168.1.216:8080');
-
-  static const int connectUserId = 1;
+  final UserService _userService = UserService();
+  final AuthService _authService = AuthService();
+  int? _currentUserId;
 
   int? _userRating; // Nullable - user can submit without rating
   final TextEditingController _commentController = TextEditingController();
@@ -66,22 +71,9 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
       curve: Curves.easeOutCubic,
     ));
     _loadProductDetails();
-    _loadCartItemCount();
   }
 
-  Future<void> _loadCartItemCount() async {
-    try {
-      final cart = await CartService().getCartByUserId(connectUserId);
-      if (cart != null && mounted) {
-        final cartItems = (cart['cartItems'] as List<dynamic>?)?.length ?? 0;
-        setState(() {
-          _cartItemCount = cartItems;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading cart count: $e');
-    }
-  }
+
 
   @override
   void dispose() {
@@ -114,6 +106,10 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
 
   Future<void> _loadProductDetails() async {
     try {
+      if (_currentUserId == null) {
+        _currentUserId = await _authService.getUserId();
+      }
+      
       final product = await _productService.getProductById(widget.productId);
       final reviews = await _reviewService.getReviewsByProduct(widget.productId);
 
@@ -127,14 +123,16 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
         }
       }
 
-      final userReview = reviews.firstWhere(
-            (r) => r['userId'] == connectUserId,
-        orElse: () => <String, dynamic>{},
-      );
-      if (userReview.isNotEmpty) {
-        _userReview = userReview;
-        _userRating = userReview['rating'];
-        _commentController.text = userReview['comment'] ?? '';
+      if (_currentUserId != null) {
+        final userReview = reviews.firstWhere(
+              (r) => r['userId'] == _currentUserId,
+          orElse: () => <String, dynamic>{},
+        );
+        if (userReview.isNotEmpty) {
+          _userReview = userReview;
+          _userRating = userReview['rating'];
+          _commentController.text = userReview['comment'] ?? '';
+        }
       }
 
       setState(() {
@@ -143,7 +141,10 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
         _isLoading = false;
       });
 
-      await _loadProductImages();
+      await Future.wait([
+        _loadProductImages(),
+        _loadCompanyInfo(),
+      ]);
       _animationController.forward();
     } catch (e) {
       setState(() {
@@ -159,16 +160,30 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     try {
       if (_product == null) return;
 
-      final attachments = _product!['attachments'] as List<dynamic>? ?? [];
+      final productId = _product!['productId'] as int?;
+      if (productId == null) return;
+
       final List<Uint8List> images = [];
 
-      for (var attach in attachments) {
-        try {
-          final attachmentDownload = await _attachmentService.downloadAttachment(attach['attachmentId']);
-          images.add(attachmentDownload.data);
-        } catch (e) {
-          images.add(Uint8List.fromList([]));
+      try {
+        final attachments = await _attachmentService.findByProductProductId(productId);
+
+        for (var attach in attachments) {
+          try {
+            final attachmentId = attach['attachmentId'] as int?;
+            if (attachmentId != null) {
+              final attachmentDownload = await _attachmentService.downloadAttachment(attachmentId);
+              if (attachmentDownload.data.isNotEmpty) {
+                images.add(attachmentDownload.data);
+              }
+            }
+          } catch (e) {
+            debugPrint('⚠️ Error downloading attachment: $e');
+            continue;
+          }
         }
+      } catch (e) {
+        debugPrint('⚠️ Error fetching attachments for product $productId: $e');
       }
 
       setState(() {
@@ -181,7 +196,6 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
       });
     }
   }
-
   Future<void> _refreshReviews() async {
     setState(() => _isLoadingReviews = true);
     try {
@@ -197,13 +211,17 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
         }
       }
 
-      final userReview = reviews.firstWhere(
-            (r) => r['userId'] == connectUserId,
-        orElse: () => <String, dynamic>{},
-      );
+      Map<String, dynamic>? userReview;
+      if (_currentUserId != null) {
+        final foundReview = reviews.firstWhere(
+              (r) => r['userId'] == _currentUserId,
+          orElse: () => <String, dynamic>{},
+        );
+        userReview = foundReview.isNotEmpty ? foundReview : null;
+      }
       setState(() {
         _reviews = reviews;
-        _userReview = userReview.isNotEmpty ? userReview : null;
+        _userReview = userReview;
         if (_userReview != null) {
           _userRating = _userReview!['rating'];
           _commentController.text = _userReview!['comment'] ?? '';
@@ -227,19 +245,25 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     final productId = _product!['productId'];
     if (productId == null) return;
 
+    if (_currentUserId == null) {
+      _currentUserId = await _authService.getUserId();
+    }
+    
+    if (_currentUserId == null) return;
+
     try {
-      await _cartItemService.createCartItem({
+      await _cartItemService.addProductToUserCart(_currentUserId!, {
         'productId': productId,
         'quantity': _quantity,
-        'cartId': 1,
       });
 
-      setState(() {
-        _cartItemCount += _quantity;
-      });
+      _cartNotifier.notifyCartChanged();
 
       if (mounted) {
-        _showSnackBar('${_product!['productName'] ?? 'Produit'} ajouté au panier', icon: Icons.check_circle);
+        _showSnackBar(
+          '${_product!['productName'] ?? 'Produit'} ajouté au panier',
+          icon: Icons.check_circle,
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -266,7 +290,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
         'comment': _commentController.text.trim().isEmpty ? null : _commentController.text.trim(),
         'productId': _product!["productId"],
         'companyId': _product!['companyId'],
-        'userId': connectUserId,
+        'userId': _currentUserId,
       };
 
       if (_userReview == null) {
@@ -391,6 +415,24 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     }
   }
 
+  Future<void> _loadCompanyInfo() async {
+    try {
+      if (_product == null) return;
+      
+      final companyId = _product!['companyId'];
+      if (companyId != null) {
+        final company = await _companyService.getCompanyById(companyId);
+        if (mounted) {
+          setState(() {
+            _companyInfo = company;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading company info: $e');
+    }
+  }
+
   void _showSnackBar(String message, {bool isError = false, IconData? icon}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -417,40 +459,30 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     if (_isLoading) {
       return Scaffold(
         backgroundColor: Colors.grey[50],
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.2),
-                      blurRadius: 20,
-                      spreadRadius: 5,
-                    ),
+        body: Skeletonizer(
+          enabled: true,
+          child: CustomScrollView(
+            slivers: [
+              _buildSkeletonAppBar(),
+              SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildSkeletonImageGallery(),
+                    const SizedBox(height: 16),
+                    _buildSkeletonProductInfo(),
+                    const SizedBox(height: 16),
+                    _buildSkeletonDescription(),
+                    const SizedBox(height: 16),
+                    _buildSkeletonReviews(),
+                    const SizedBox(height: 100),
                   ],
-                ),
-                child: CircularProgressIndicator(
-                  color: AppColors.primary,
-                  strokeWidth: 3,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Chargement...',
-                style: TextStyle(
-                  color: Colors.grey[700],
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
         ),
+        bottomNavigationBar: _buildSkeletonBottomBar(),
       );
     }
 
@@ -501,6 +533,8 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
                     const SizedBox(height: 16),
                     _buildProductInfo(),
                     const SizedBox(height: 16),
+                    if (_companyInfo != null) _buildCompanyInfo(),
+                    if (_companyInfo != null) const SizedBox(height: 16),
                     _buildDescription(),
                     const SizedBox(height: 16),
                     _buildReviews(),
@@ -540,90 +574,14 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      actions: [
-        Container(
-          margin: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: IconButton(
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.shopping_bag_outlined, color: Colors.black87, size: 22),
-                if (_cartItemCount > 0)
-                  Positioned(
-                    right: -6,
-                    top: -6,
-                    child: Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)],
-                        ),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withOpacity(0.5),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
-                      child: Text(
-                        '$_cartItemCount',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const CartPage()),
-              );
-            },
-          ),
-        ),
-        const SizedBox(width: 8),
-      ],
     );
   }
 
   Widget _buildImageGallery() {
     if (_isLoadingImages) {
-      return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
-        height: 420,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 24,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Center(
-          child: CircularProgressIndicator(color: AppColors.primary, strokeWidth: 3),
-        ),
+      return Skeletonizer(
+        enabled: true,
+        child: _buildSkeletonImageGallery(),
       );
     }
 
@@ -1090,6 +1048,133 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     );
   }
 
+  Widget _buildCompanyInfo() {
+    if (_companyInfo == null) return const SizedBox.shrink();
+
+    final companyName = _companyInfo!['companyName'] ?? 'Entreprise';
+    final companyPhone = _companyInfo!['companyPhone'];
+    final companyAddress = _companyInfo!['companyAddress'];
+    final companySector = _companyInfo!['companySector'];
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [AppColors.primary.withOpacity(0.15), AppColors.primary.withOpacity(0.05)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.store_outlined,
+                  color: AppColors.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Vendeur',
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildCompanyInfoRow(
+            icon: Icons.business_outlined,
+            label: companyName,
+            value: companySector ?? 'Secteur non spécifié',
+          ),
+          if (companyPhone != null) ...[
+            const SizedBox(height: 12),
+            _buildCompanyInfoRow(
+              icon: Icons.phone_outlined,
+              label: 'Téléphone',
+              value: companyPhone,
+            ),
+          ],
+          if (companyAddress != null) ...[
+            const SizedBox(height: 12),
+            _buildCompanyInfoRow(
+              icon: Icons.location_on_outlined,
+              label: 'Adresse',
+              value: companyAddress,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCompanyInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            color: AppColors.primary,
+            size: 18,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[600],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildDescription() {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
@@ -1257,7 +1342,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
               ),
               itemBuilder: (context, index) {
                 final review = _reviews[index];
-                final isUserReview = review['userId'] == connectUserId;
+                final isUserReview = review['userId'] == _currentUserId;
                 return _buildReviewItem(review, isUserReview);
               },
             ),
@@ -1406,7 +1491,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
                               color: (_userRating != null && index < _userRating!)
                                   ? Colors.amber[600]
                                   : Colors.grey[400],
-                              size: 36,
+                              size: 30,
                             ),
                           ),
                         );
@@ -1848,6 +1933,257 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================================
+  // SKELETON UI METHODS
+  // ============================================================================
+
+  Widget _buildSkeletonAppBar() {
+    return SliverAppBar(
+      expandedHeight: 0,
+      pinned: true,
+      backgroundColor: Colors.white,
+      elevation: 0,
+      leading: Container(
+        margin: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Bone.square(size: 40),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonImageGallery() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            height: 380,
+            decoration: const BoxDecoration(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: const Bone.square(size: double.infinity),
+          ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              height: 90,
+              child: Row(
+                children: List.generate(3, (index) => 
+                  Container(
+                    margin: const EdgeInsets.only(right: 12),
+                    child: const Bone.square(size: 85),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonProductInfo() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: Bone.text(words: 3, fontSize: 24)),
+              const SizedBox(width: 12),
+              Bone.button(width: 100, height: 35),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Bone.text(words: 2, fontSize: 16),
+          const SizedBox(height: 8),
+          Bone.button(width: 150, height: 50),
+          const SizedBox(height: 20),
+          Bone.button(width: double.infinity, height: 60),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonDescription() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Bone.square(size: 40),
+              const SizedBox(width: 12),
+              Bone.text(words: 1, fontSize: 19),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Bone.text(words: 20, fontSize: 15),
+          const SizedBox(height: 8),
+          Bone.text(words: 15, fontSize: 15),
+          const SizedBox(height: 8),
+          Bone.text(words: 10, fontSize: 15),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonReviews() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Bone.square(size: 40),
+              const SizedBox(width: 12),
+              Bone.text(words: 2, fontSize: 19),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Bone.button(width: double.infinity, height: 120),
+          const SizedBox(height: 24),
+          Container(height: 1.5, color: Colors.grey[200]),
+          const SizedBox(height: 20),
+          ...List.generate(2, (index) => 
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: _buildSkeletonReviewItem(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonReviewItem() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Bone.circle(size: 42),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Bone.text(words: 2, fontSize: 16),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: List.generate(5, (index) => 
+                        Container(
+                          margin: const EdgeInsets.only(right: 2),
+                          child: const Bone.square(size: 18),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Bone.text(words: 12, fontSize: 15),
+          const SizedBox(height: 8),
+          Bone.text(words: 8, fontSize: 15),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSkeletonBottomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 24,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Row(
+          children: [
+            Bone.button(width: 120, height: 50),
+            const SizedBox(width: 12),
+            Expanded(child: Bone.button(width: double.infinity, height: 50)),
           ],
         ),
       ),

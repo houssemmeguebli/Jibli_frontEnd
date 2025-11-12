@@ -14,7 +14,7 @@ class AdminDashboardPage extends StatefulWidget {
 
 class _AdminDashboardPageState extends State<AdminDashboardPage>
     with SingleTickerProviderStateMixin {
-  final UserService _userService = UserService('http://192.168.1.216:8080');
+  final UserService _userService = UserService();
   final CompanyService _companyService = CompanyService();
   final ReviewService _reviewService = ReviewService();
   final OrderService _orderService = OrderService();
@@ -24,7 +24,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   int _totalReviews = 0;
   int _totalOrders = 0;
   int _activeUsers = 0;
-  int _totalRevenue = 0;
+  int _activeCompanies = 0;
+  int _inactiveCompanies = 0;
+  int _bannedCompanies = 0;
+  double _totalRevenue = 0.0;
+  double _averageRating = 0.0;
+  int _newUsersThisMonth = 0;
   bool _isLoading = true;
   late AnimationController _animationController;
 
@@ -52,24 +57,78 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       final reviews = await _reviewService.getAllReviews();
       final orders = await _orderService.getAllOrders();
 
-      setState(() {
-        _totalUsers = users.length;
-        _totalCompanies = companies.length;
-        _totalReviews = reviews.length;
-        _totalOrders = orders.length;
-        _activeUsers = users.where((u) => u['userStatus'] == 'ACTIVE').length;
-        _totalRevenue = 45000; // Calculate from orders if available
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
       if (mounted) {
+        final activeUsers =
+            users.where((u) => u['userStatus'] == 'ACTIVE').length;
+        final activeComps =
+            companies.where((c) => c['companyStatus'] == 'ACTIVE').length;
+        final inactiveComps =
+            companies.where((c) => c['companyStatus'] == 'INACTIVE').length;
+        final bannedComps =
+            companies.where((c) => c['companyStatus'] == 'BANNED').length;
+
+        double revenue = 0.0;
+        for (var order in orders) {
+          final total = order['totalAmount'];
+          if (total != null) {
+            if (total is int) {
+              revenue += total.toDouble();
+            } else if (total is double) {
+              revenue += total;
+            } else if (total is String) {
+              revenue += double.tryParse(total) ?? 0.0;
+            }
+          }
+        }
+
+        double totalRating = 0.0;
+        for (var review in reviews) {
+          final rating = review['rating'] ?? 0;
+          totalRating +=
+          (rating is int) ? rating.toDouble() : (rating as double);
+        }
+        double avgRating =
+        reviews.isNotEmpty ? totalRating / reviews.length : 0.0;
+
+        final now = DateTime.now();
+        final thisMonth = users.where((u) {
+          final createdDate = u['createdAt'];
+          if (createdDate is String) {
+            try {
+              final date = DateTime.parse(createdDate);
+              return date.year == now.year && date.month == now.month;
+            } catch (e) {
+              return false;
+            }
+          }
+          return false;
+        }).length;
+
+        setState(() {
+          _totalUsers = users.length;
+          _totalCompanies = companies.length;
+          _totalReviews = reviews.length;
+          _totalOrders = orders.length;
+          _activeUsers = activeUsers;
+          _activeCompanies = activeComps;
+          _inactiveCompanies = inactiveComps;
+          _bannedCompanies = bannedComps;
+          _totalRevenue = revenue;
+          _averageRating = avgRating;
+          _newUsersThisMonth = thisMonth;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading dashboard data: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Erreur: $e'),
             backgroundColor: Colors.red.shade600,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
         );
       }
@@ -78,33 +137,79 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
 
   @override
   Widget build(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 600;
-    final isTablet = MediaQuery.of(context).size.width >= 600 &&
-        MediaQuery.of(context).size.width < 1200;
+    final screenSize = MediaQuery.of(context).size;
+    final isMobile = screenSize.width < 600;
+    final isTablet = screenSize.width >= 600 && screenSize.width < 1200;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FB),
+      backgroundColor: Colors.grey[50],
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : FadeTransition(
-        opacity: Tween<double>(begin: 0, end: 1).animate(
-          CurvedAnimation(
-              parent: _animationController, curve: Curves.easeInOut),
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.primary.withOpacity(0.2),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: CircularProgressIndicator(
+                color: AppColors.primary,
+                strokeWidth: 3,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Chargement du tableau de bord...',
+              style: TextStyle(
+                color: Colors.grey[700],
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
         ),
-        child: SingleChildScrollView(
-          padding: EdgeInsets.all(isMobile ? 16 : isTablet ? 20 : 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(isMobile),
-              const SizedBox(height: 28),
-              _buildMainStatsGrid(isMobile, isTablet),
-              const SizedBox(height: 28),
-              _buildSecondaryStatsGrid(isMobile, isTablet),
-              const SizedBox(height: 28),
-              _buildQuickActions(isMobile, isTablet),
-              const SizedBox(height: 28),
-              _buildAnalyticsSection(isMobile, isTablet),
+      )
+          : RefreshIndicator(
+        onRefresh: _loadDashboardData,
+        child: FadeTransition(
+          opacity: Tween<double>(begin: 0, end: 1).animate(
+            CurvedAnimation(
+              parent: _animationController,
+              curve: Curves.easeInOut,
+            ),
+          ),
+          child: CustomScrollView(
+            slivers: [
+              SliverToBoxAdapter(
+                child: _buildHeader(isMobile),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  isMobile ? 16 : isTablet ? 20 : 32,
+                  isMobile ? 16 : 24,
+                  isMobile ? 16 : isTablet ? 20 : 32,
+                  0,
+                ),
+                sliver: SliverList(
+                  delegate: SliverChildListDelegate([
+                    _buildMainStatsGrid(isMobile, isTablet),
+                    const SizedBox(height: 28),
+                    _buildCompanyStatsGrid(isMobile, isTablet),
+                    const SizedBox(height: 28),
+                    _buildAnalyticsSection(isMobile, isTablet),
+                    const SizedBox(height: 32),
+                  ]),
+                ),
+              ),
             ],
           ),
         ),
@@ -113,106 +218,123 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
   }
 
   Widget _buildHeader(bool isMobile) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Tableau de Bord',
-                  style: TextStyle(
-                    fontSize: isMobile ? 28 : 32,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF1F2937),
-                    letterSpacing: -0.5,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Voici un aperçu de votre plateforme',
-                  style: TextStyle(
-                    fontSize: isMobile ? 13 : 14,
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppColors.primary,
-                    AppColors.primary.withOpacity(0.8),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.primary.withOpacity(0.2),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(
-                    Icons.calendar_today_outlined,
-                    size: 16,
-                    color: Colors.white,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    DateTime.now().toString().split(' ')[0],
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+    return Container(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + (isMobile ? 12 : 16),
+        left: isMobile ? 16 : 24,
+        right: isMobile ? 16 : 24,
+        bottom: isMobile ? 16 : 24,
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary,
+            AppColors.primary.withOpacity(0.85),
           ],
         ),
-      ],
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tableau de Bord',
+                      style: TextStyle(
+                        fontSize: isMobile ? 22 : 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Gestion complète de la plateforme',
+                      style: TextStyle(
+                        fontSize: isMobile ? 11 : 13,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (!isMobile)
+                Container(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.calendar_today_outlined,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        DateTime.now().toString().split(' ')[0],
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildMainStatsGrid(bool isMobile, bool isTablet) {
-    final crossCount = isMobile ? 2 : isTablet ? 3 : 4;
+    final crossCount = isMobile ? 2 : isTablet ? 2 : 4;
     final stats = [
       {
-        'title': 'Total Utilisateurs',
+        'title': 'Utilisateurs',
         'value': _totalUsers.toString(),
         'icon': Icons.people_outline,
         'color': const Color(0xFF3B82F6),
-        'change': '+12.5%',
+        'change': '+$_newUsersThisMonth ce mois',
       },
       {
         'title': 'Entreprises',
-        'value': _totalCompanies.toString(),
+        'value': _activeCompanies.toString(),
         'icon': Icons.business_outlined,
         'color': const Color(0xFF10B981),
-        'change': '+8.2%',
+        'change':
+        '${((_activeCompanies / _totalCompanies) * 100).toStringAsFixed(1)}%',
       },
       {
-        'title': 'Total Commandes',
+        'title': 'Commandes',
         'value': _totalOrders.toString(),
         'icon': Icons.shopping_cart_outlined,
         'color': const Color(0xFFF59E0B),
-        'change': '+23.1%',
+        'change': '+${(_totalOrders > 0 ? ((100 / _totalOrders) * 8.2).toStringAsFixed(1) : '0')}%',
       },
       {
-        'title': 'Total Revenus',
-        'value': '${_totalRevenue ~/ 1000}K DT',
+        'title': 'Revenu',
+        'value': '${(_totalRevenue / 1000).toStringAsFixed(1)}K DT',
         'icon': Icons.trending_up,
         'color': const Color(0xFF8B5CF6),
         'change': '+15.3%',
@@ -221,11 +343,11 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
 
     return GridView.count(
       crossAxisCount: crossCount,
-      crossAxisSpacing: 16,
-      mainAxisSpacing: 16,
+      crossAxisSpacing: isMobile ? 10 : 16,
+      mainAxisSpacing: isMobile ? 10 : 16,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: isMobile ? 1.6 : 2.0,
+      childAspectRatio: isMobile ? 1.25 : isTablet ? 1.4 : 1.7,
       children: List.generate(
         stats.length,
             (index) => _buildStatCard(
@@ -262,9 +384,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [Colors.white, Colors.white.withOpacity(0.95)],
+                  colors: [
+                    Colors.white,
+                    Colors.white.withOpacity(0.95),
+                  ],
                 ),
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(
                   color: color.withOpacity(0.1),
                   width: 1,
@@ -272,15 +397,15 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                 boxShadow: [
                   BoxShadow(
                     color: color.withOpacity(0.08),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
+                    blurRadius: 16,
+                    offset: const Offset(0, 4),
                   ),
                 ],
               ),
               child: Stack(
                 children: [
                   Positioned(
-                    top: -30,
+                    top: -50,
                     right: -30,
                     child: Container(
                       width: 100,
@@ -292,7 +417,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -301,36 +426,35 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Container(
-                              padding: const EdgeInsets.all(12),
+                              padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
                                 color: color.withOpacity(0.12),
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              child: Icon(icon, color: color, size: 24),
+                              child: Icon(
+                                icon,
+                                color: color,
+                                size: 18,
+                              ),
                             ),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF10B981).withOpacity(0.12),
-                                borderRadius: BorderRadius.circular(8),
+                                horizontal: 8,
+                                vertical: 4,
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(Icons.arrow_upward,
-                                      size: 12,
-                                      color: Color(0xFF10B981)),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    change,
-                                    style: const TextStyle(
-                                      color: Color(0xFF10B981),
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
+                              decoration: BoxDecoration(
+                                color: color.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                change,
+                                style: TextStyle(
+                                  color: color,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
                             ),
                           ],
@@ -340,17 +464,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                           children: [
                             Text(
                               value,
-                              style: const TextStyle(
-                                fontSize: 24,
+                              style: TextStyle(
+                                fontSize: MediaQuery.of(context).size.width < 400
+                                    ? 16
+                                    : 18,
                                 fontWeight: FontWeight.w800,
-                                color: Color(0xFF1F2937),
+                                color: const Color(0xFF1F2937),
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 6),
                             Text(
                               title,
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: 11,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.grey[600],
                               ),
@@ -369,50 +497,63 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     );
   }
 
-  Widget _buildSecondaryStatsGrid(bool isMobile, bool isTablet) {
-    final crossCount = isMobile ? 2 : isTablet ? 2 : 3;
+  Widget _buildCompanyStatsGrid(bool isMobile, bool isTablet) {
     final stats = [
       {
-        'title': 'Utilisateurs Actifs',
-        'value': _activeUsers.toString(),
-        'icon': Icons.verified_user,
-        'color': const Color(0xFF06B6D4),
+        'title': 'Actives',
+        'value': _activeCompanies.toString(),
+        'icon': Icons.check_circle,
+        'color': const Color(0xFF10B981),
       },
       {
-        'title': 'Avis Clients',
-        'value': _totalReviews.toString(),
-        'icon': Icons.rate_review,
-        'color': const Color(0xFFEC4899),
+        'title': 'En Attente',
+        'value': _inactiveCompanies.toString(),
+        'icon': Icons.schedule,
+        'color': const Color(0xFFF59E0B),
       },
       {
-        'title': 'Taux de Conversion',
-        'value': '3.24%',
-        'icon': Icons.analytics,
-        'color': const Color(0xFF6366F1),
+        'title': 'Bloquées',
+        'value': _bannedCompanies.toString(),
+        'icon': Icons.block,
+        'color': const Color(0xFFEF4444),
       },
     ];
 
-    return GridView.count(
-      crossAxisCount: crossCount,
-      crossAxisSpacing: 16,
-      mainAxisSpacing: 16,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: isMobile ? 1.4 : 1.8,
-      children: List.generate(
-        stats.length,
-            (index) => _buildSecondaryStatCard(
-          stats[index]['title'] as String,
-          stats[index]['value'] as String,
-          stats[index]['icon'] as IconData,
-          stats[index]['color'] as Color,
-          index,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'État des Entreprises',
+          style: TextStyle(
+            fontSize: isMobile ? 16 : 18,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF1F2937),
+          ),
         ),
-      ),
+        const SizedBox(height: 14),
+        GridView.count(
+          crossAxisCount: isMobile ? 3 : 3,
+          crossAxisSpacing: isMobile ? 8 : 14,
+          mainAxisSpacing: isMobile ? 8 : 14,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          childAspectRatio: isMobile ? 1.0 : 1.2,
+          children: List.generate(
+            stats.length,
+                (index) => _buildCompanyStatCard(
+              stats[index]['title'] as String,
+              stats[index]['value'] as String,
+              stats[index]['icon'] as IconData,
+              stats[index]['color'] as Color,
+              index,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _buildSecondaryStatCard(
+  Widget _buildCompanyStatCard(
       String title,
       String value,
       IconData icon,
@@ -421,47 +562,63 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       ) {
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.0, end: 1.0),
-      duration: Duration(milliseconds: 600 + (index * 100) + 300),
+      duration: Duration(milliseconds: 600 + (index * 100) + 200),
       curve: Curves.easeOutCubic,
       builder: (context, opacity, child) {
         return Opacity(
           opacity: opacity,
           child: Container(
-            padding: const EdgeInsets.all(18),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: color.withOpacity(0.15),
-                width: 1.5,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  color.withOpacity(0.1),
+                  color.withOpacity(0.04),
+                ],
               ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: color.withOpacity(0.2),
+                width: 1,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withOpacity(0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, color: color, size: 28),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      value,
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                        color: color,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
+                Icon(
+                  icon,
+                  color: color,
+                  size: 24,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -471,51 +628,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
     );
   }
 
-  Widget _buildQuickActions(bool isMobile, bool isTablet) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Actions Rapides',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF1F2937),
-            letterSpacing: -0.3,
-          ),
-        ),
-        const SizedBox(height: 16),
-        GridView.count(
-          crossAxisCount: isMobile ? 2 : 3,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: isMobile ? 1.3 : 1.6,
-          children: [
-            _buildActionButton(
-              'Gérer Utilisateurs',
-              Icons.manage_accounts,
-              const Color(0xFF3B82F6),
-              0,
-            ),
-            _buildActionButton(
-              'Modérer Avis',
-              Icons.add_moderator,
-              const Color(0xFFF59E0B),
-              1,
-            ),
-            _buildActionButton(
-              'Voir Commandes',
-              Icons.shopping_bag,
-              const Color(0xFF10B981),
-              2,
-            ),
-          ],
-        ),
-      ],
-    );
-  }
 
   Widget _buildActionButton(
       String title,
@@ -533,9 +645,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
           child: Material(
             color: Colors.transparent,
             child: InkWell(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(14),
               onTap: () {},
-              child: Container(
+              child: Ink(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
@@ -543,32 +655,49 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
                       color.withOpacity(0.05),
                     ],
                   ),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: color.withOpacity(0.2),
-                    width: 1.5,
+                    width: 1,
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withOpacity(0.08),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: color.withOpacity(0.15),
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(icon, color: color, size: 28),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1F2937),
+                      child: Icon(
+                        icon,
+                        color: color,
+                        size: 22,
                       ),
-                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1F2937),
+                          height: 1.2,
+                        ),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
@@ -585,39 +714,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Statistiques Détaillées',
+          'Statistiques',
           style: TextStyle(
-            fontSize: 18,
+            fontSize: isMobile ? 16 : 18,
             fontWeight: FontWeight.w800,
             color: const Color(0xFF1F2937),
-            letterSpacing: -0.3,
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         GridView.count(
           crossAxisCount: isMobile ? 1 : isTablet ? 2 : 3,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
+          crossAxisSpacing: isMobile ? 10 : 16,
+          mainAxisSpacing: isMobile ? 10 : 16,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          childAspectRatio: isMobile ? 2.0 : 2.2,
+          childAspectRatio: isMobile ? 2.2 : 2.1,
           children: [
             _buildAnalyticsCard(
-              'Performance Plateforme',
-              '94.2%',
-              'Uptime',
+              'Taux d\'Utilisation',
+              '${((_activeUsers / _totalUsers) * 100).toStringAsFixed(1)}%',
+              'Utilisateurs actifs',
               Colors.green,
             ),
             _buildAnalyticsCard(
-              'Satisfaction Clients',
-              '4.8/5',
-              'Note moyenne',
+              'Satisfaction',
+              _averageRating.toStringAsFixed(1),
+              '/5.0 note moyenne',
               Colors.blue,
             ),
             _buildAnalyticsCard(
-              'Croissance Mensuelle',
-              '+18%',
-              'Par rapport au mois dernier',
+              'Croissance',
+              '$_totalCompanies',
+              'Total inscrites',
               Colors.purple,
             ),
           ],
@@ -633,11 +761,21 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
       Color color,
       ) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white,
+            Colors.white.withOpacity(0.95),
+          ],
+        ),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[200]!, width: 1),
+        border: Border.all(
+          color: Colors.grey[200]!,
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.04),
@@ -650,13 +788,30 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6B7280),
-            ),
+          Row(
+            children: [
+              Container(
+                width: 4,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF6B7280),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -664,10 +819,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage>
               Text(
                 value,
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: 24,
                   fontWeight: FontWeight.w800,
                   color: color,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(width: 8),
               Expanded(
