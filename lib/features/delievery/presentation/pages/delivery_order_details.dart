@@ -1158,6 +1158,389 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     );
   }
 
+  List<Map<String, dynamic>> _parseToppings(dynamic toppingsData) {
+    if (toppingsData == null) return [];
+
+    if (toppingsData is List) {
+      final List<Map<String, dynamic>> result = [];
+      for (var topping in toppingsData) {
+        if (topping is Map<String, dynamic>) {
+          final toppingId = topping['toppingId'];
+          final toppingName = topping['toppingName'];
+          if (toppingId != null && toppingName != null) {
+            result.add({
+              'toppingId': toppingId,
+              'toppingName': toppingName.toString(),
+            });
+          }
+        }
+      }
+      return result;
+    }
+    return [];
+  }
+
+  List<Map<String, dynamic>> _parseExtras(dynamic extrasData) {
+    if (extrasData == null) return [];
+
+    if (extrasData is List) {
+      final List<Map<String, dynamic>> result = [];
+      for (var extra in extrasData) {
+        if (extra is Map<String, dynamic>) {
+          final extraId = extra['extraId'];
+          final extraName = extra['extraName'];
+          var extraPrice = extra['extraPrice'];
+
+          if (extraId != null && extraName != null && extraPrice != null) {
+            double price = 0.0;
+            if (extraPrice is double) {
+              price = extraPrice;
+            } else if (extraPrice is int) {
+              price = extraPrice.toDouble();
+            } else if (extraPrice is num) {
+              price = extraPrice.toDouble();
+            } else if (extraPrice is String) {
+              price = double.tryParse(extraPrice) ?? 0.0;
+            }
+
+            result.add({
+              'extraId': extraId,
+              'extraName': extraName.toString(),
+              'extraPrice': price,
+            });
+          }
+        }
+      }
+      return result;
+    }
+    return [];
+  }
+
+  Widget _buildToppingsSection(List<Map<String, dynamic>> toppings) {
+    if (toppings.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.blue[50] ?? Colors.blue.withOpacity(0.1),
+            Colors.blue[25] ?? Colors.blue.withOpacity(0.05)
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.blue[200] ?? Colors.blue.withOpacity(0.3),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.blue[400] ?? Colors.blue,
+                        Colors.blue[600] ?? Colors.blue
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.restaurant_menu,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Garnitures • ${toppings.length} sélection${toppings.length > 1 ? 's' : ''}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.blue[700] ?? Colors.blue,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: toppings.map<Widget>((topping) {
+                final name = topping['toppingName']?.toString() ?? 'Garniture';
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.white,
+                        Colors.blue[50] ?? Colors.blue.withOpacity(0.1)
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.blue[300] ?? Colors.blue.withOpacity(0.3),
+                      width: 0.8,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.08),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 5,
+                    children: [
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: Colors.blue[500] ?? Colors.blue,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.blue.withOpacity(0.4),
+                              blurRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.blue[700] ?? Colors.blue,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExtrasSection(List<Map<String, dynamic>> extras) {
+    if (extras.isEmpty) return const SizedBox.shrink();
+
+    double totalExtraPrice = 0.0;
+    for (var extra in extras) {
+      totalExtraPrice += (extra['extraPrice'] ?? 0.0) as double;
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Colors.green[50] ?? Colors.green.withOpacity(0.1),
+            Colors.green[25] ?? Colors.green.withOpacity(0.05)
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.green[200] ?? Colors.green.withOpacity(0.3),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.green.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.green[400] ?? Colors.green,
+                        Colors.green[600] ?? Colors.green
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.green.withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.add_circle,
+                    size: 14,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Suppléments • ${extras.length} addition${extras.length > 1 ? 's' : ''} (+${totalExtraPrice.toStringAsFixed(2)} DT)',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.green[700] ?? Colors.green,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: extras.map<Widget>((extra) {
+                final name = extra['extraName']?.toString() ?? 'Supplément';
+                final price = (extra['extraPrice'] ?? 0.0) as double;
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.white,
+                        Colors.green[50] ?? Colors.green.withOpacity(0.1)
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.green[300] ?? Colors.green.withOpacity(0.3),
+                      width: 0.8,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.green.withOpacity(0.08),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 6,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.green[500] ?? Colors.green,
+                              Colors.green[600] ?? Colors.green
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.green.withOpacity(0.3),
+                              blurRadius: 3,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          '+${price.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 9,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                      Flexible(
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.green[700] ?? Colors.green,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.2,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  double _calculateItemTotalWithExtras(Map<String, dynamic> item) {
+    final product = item['product'] as Map<String, dynamic>?;
+    if (product == null) return 0.0;
+
+    final quantity = item['quantity'] ?? 1;
+    final basePrice = (product['productFinalePrice'] ?? 0).toDouble();
+
+    final extras = _parseExtras(item['selectedExtras']);
+    double extraPrice = 0.0;
+    for (var extra in extras) {
+      extraPrice += (extra['extraPrice'] ?? 0.0) as double;
+    }
+
+    return (basePrice + extraPrice) * quantity;
+  }
+
   Widget _buildOrderItemCard(Map<String, dynamic> item) {
     final product = item['product'] as Map<String, dynamic>?;
     if (product == null) return const SizedBox.shrink();
@@ -1166,6 +1549,10 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
     final productName = product['productName'] ?? 'Produit';
     final quantity = item['quantity'] ?? 1;
     final unitPrice = (item['unitPrice'] ?? 0).toDouble();
+
+    final toppings = _parseToppings(item['selectedToppings']);
+    final extras = _parseExtras(item['selectedExtras']);
+    final itemTotal = _calculateItemTotalWithExtras(item);
 
     final images = _productImages[productId] ?? [];
     final selectedIndex = _selectedImageIndex[productId] ?? 0;
@@ -1280,7 +1667,7 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                '${(unitPrice * quantity).toStringAsFixed(2)} DT',
+                                '${itemTotal.toStringAsFixed(2)} DT',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
@@ -1295,6 +1682,14 @@ class _DeliveryOrderDetailsPageState extends State<DeliveryOrderDetailsPage> {
                   ),
                 ],
               ),
+              if (toppings.isNotEmpty || extras.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                if (toppings.isNotEmpty) ...[
+                  _buildToppingsSection(toppings),
+                  if (extras.isNotEmpty) const SizedBox(height: 8),
+                ],
+                if (extras.isNotEmpty) _buildExtrasSection(extras),
+              ],
               if (images.length > 1) ...[
                 const SizedBox(height: 12),
                 SizedBox(

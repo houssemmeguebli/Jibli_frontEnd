@@ -9,7 +9,7 @@ import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/cart_notifier.dart';
 import '../../../../core/services/auth_service.dart';
 import 'cutomer_order_page.dart';
-import 'product_detail_page.dart';
+import 'customer_product_detail_page.dart';
 import 'dart:typed_data';
 
 class CartPage extends StatefulWidget {
@@ -91,6 +91,12 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
       debugPrint('🔍 Loading carts for user: $currentUserId');
       final groupedCarts = await _cartService.getUserCartsGroupedByCompany(currentUserId!);
       debugPrint('📦 Loaded ${groupedCarts.length} carts');
+
+      // Print complete cart data structure
+      debugPrint('🛒 COMPLETE CART DATA:');
+      for (int i = 0; i < groupedCarts.length; i++) {
+        debugPrint('Cart $i: ${groupedCarts[i]}');
+      }
 
       double totalAmount = 0.0;
       for (var cart in groupedCarts) {
@@ -355,10 +361,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
       double cartTotal = 0.0;
       final cartItems = cart['cartItems'] as List<dynamic>;
       for (var item in cartItems) {
-        final quantity = (item['quantity'] ?? 1) as int;
-        final priceValue = item['productFinalePrice'];
-        final price = (priceValue is int) ? priceValue.toDouble() : (priceValue as double);
-        cartTotal += price * quantity;
+        cartTotal += _calculateItemTotalWithExtras(item);
       }
       cart['totalPrice'] = cartTotal;
       _totalAmount += cartTotal;
@@ -376,6 +379,384 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
     }
     debugPrint('🔔 Notifying cart update: $totalItems items');
     widget.onCartUpdated?.call(totalItems);
+  }
+
+  Widget _buildToppingsAndExtras(Map<String, dynamic> item) {
+    final toppings = _parseToppings(item['selectedToppings']);
+    final extras = _parseExtras(item['selectedExtras']);
+
+    if (toppings.isEmpty && extras.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    List<String> items = [];
+    
+    for (var topping in toppings) {
+      items.add(topping['toppingName']?.toString() ?? 'Garniture');
+    }
+    
+    for (var extra in extras) {
+      final name = extra['extraName']?.toString() ?? 'Supplément';
+      final price = ((extra['extraPrice'] ?? 0.0) as num).toDouble();
+      items.add('$name (+${price.toStringAsFixed(2)} DT)');
+    }
+
+    return Text(
+      items.join(', '),
+      style: TextStyle(
+        fontSize: 11,
+        color: Colors.grey[600],
+        fontStyle: FontStyle.italic,
+      ),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+
+  List<Map<String, dynamic>> _parseToppings(dynamic toppingsData) {
+    if (toppingsData == null) return [];
+
+    if (toppingsData is String) {
+      try {
+        final decoded = toppingsData.replaceAll('&quot;', '"');
+        final List<dynamic> parsed = [];
+        final regex = RegExp(r'\{"toppingId":\s*(\d+),\s*"toppingName":\s*"([^"]+)"\}');
+        final matches = regex.allMatches(decoded);
+
+        for (final match in matches) {
+          parsed.add({
+            'toppingId': int.parse(match.group(1)!),
+            'toppingName': match.group(2)!
+          });
+        }
+        return parsed.cast<Map<String, dynamic>>();
+      } catch (e) {
+        debugPrint('Error parsing toppings: $e');
+        return [];
+      }
+    }
+
+    if (toppingsData is List) {
+      return toppingsData.cast<Map<String, dynamic>>();
+    }
+
+    return [];
+  }
+
+  List<Map<String, dynamic>> _parseExtras(dynamic extrasData) {
+    if (extrasData == null) return [];
+
+    if (extrasData is String) {
+      try {
+        final decoded = extrasData.replaceAll('&quot;', '"');
+        final List<dynamic> parsed = [];
+        final regex = RegExp(r'\{"extraId":\s*(\d+),\s*"extraName":\s*"([^"]+)",\s*"extraPrice":\s*([\d.]+)\}');
+        final matches = regex.allMatches(decoded);
+
+        for (final match in matches) {
+          parsed.add({
+            'extraId': int.parse(match.group(1)!),
+            'extraName': match.group(2)!,
+            'extraPrice': double.parse(match.group(3)!)
+          });
+        }
+        return parsed.cast<Map<String, dynamic>>();
+      } catch (e) {
+        debugPrint('Error parsing extras: $e');
+        return [];
+      }
+    }
+
+    if (extrasData is List) {
+      return extrasData.cast<Map<String, dynamic>>();
+    }
+
+    return [];
+  }
+
+  Widget _buildToppingsSection(List<Map<String, dynamic>> toppings) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue[50] ?? Colors.blue.withOpacity(0.1), Colors.blue[25] ?? Colors.blue.withOpacity(0.05)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue[200] ?? Colors.blue.withOpacity(0.3), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blue.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 10,
+        children: [
+          // Header with icon and title
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+            child: Row(
+              spacing: 8,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.blue[400] ?? Colors.blue, Colors.blue[600] ?? Colors.blue],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.restaurant_menu, size: 14, color: Colors.white),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    spacing: 2,
+                    children: [
+                      Text(
+                        '${toppings.length} sélection${toppings.length > 1 ? 's' : ''}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.blue[600] ?? Colors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Toppings chips
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: toppings.map<Widget>((topping) {
+                final name = topping['toppingName']?.toString() ?? 'Garniture';
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.white, Colors.blue[50] ?? Colors.blue.withOpacity(0.1)],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue[300] ?? Colors.blue.withOpacity(0.3), width: 0.8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.08),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 5,
+                    children: [
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: Colors.blue[500] ?? Colors.blue,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.blue.withOpacity(0.4),
+                              blurRadius: 2,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.blue[700] ?? Colors.blue,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  Widget _buildExtrasSection(List<Map<String, dynamic>> extras) {
+    double totalExtraPrice = 0.0;
+    for (var extra in extras) {
+      totalExtraPrice += (extra['extraPrice'] ?? 0.0) as double;
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.green[50] ?? Colors.green.withOpacity(0.1), Colors.green[25] ?? Colors.green.withOpacity(0.05)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green[200] ?? Colors.green.withOpacity(0.3), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.green.withOpacity(0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: 10,
+        children: [
+          // Header with icon and title
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+            child: Row(
+              spacing: 8,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.green[400] ?? Colors.green, Colors.green[600] ?? Colors.green],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.green.withOpacity(0.3),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.add_circle, size: 14, color: Colors.white),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    spacing: 2,
+                    children: [
+                      Text(
+                        '${extras.length} addition${extras.length > 1 ? 's' : ''} • +${totalExtraPrice.toStringAsFixed(2)} DT',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.green[600] ?? Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Extras chips
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: extras.map<Widget>((extra) {
+                final name = extra['extraName']?.toString() ?? 'Supplément';
+                final price = (extra['extraPrice'] ?? 0.0) as double;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.white, Colors.green[50] ?? Colors.green.withOpacity(0.1)],
+                    ),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green[300] ?? Colors.green.withOpacity(0.3), width: 0.8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.green.withOpacity(0.08),
+                        blurRadius: 3,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 6,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.green[500] ?? Colors.green, Colors.green[600] ?? Colors.green],
+                          ),
+                          borderRadius: BorderRadius.circular(4),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.green.withOpacity(0.3),
+                              blurRadius: 3,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          '+${price.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 9,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                      Flexible(
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.green[700] ?? Colors.green,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.2,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  double _calculateItemTotalWithExtras(Map<String, dynamic> item) {
+    final quantity = item['quantity'] ?? 1;
+    final basePrice = (item['productFinalePrice'] ?? item['productPrice'] ?? 0.0) as double;
+    final extras = _parseExtras(item['selectedExtras']);
+
+    double extraPrice = 0.0;
+    for (var extra in extras) {
+      extraPrice += (extra['extraPrice'] ?? 0.0) as double;
+    }
+
+    return (basePrice + extraPrice) * quantity;
   }
 
   @override
@@ -701,7 +1082,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
     final price = (priceValue is int) ? priceValue.toDouble() : (priceValue as double);
     final originalPriceValue = item['productPrice'] ?? price;
     final originalPrice = (originalPriceValue is int) ? originalPriceValue.toDouble() : (originalPriceValue as double);
-    final itemTotal = price * quantity;
+    final itemTotal = _calculateItemTotalWithExtras(item);
     final hasDiscount = price < originalPrice;
 
     return Padding(
@@ -710,37 +1091,42 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         spacing: 12,
         children: [
-          GestureDetector(
-            onTap: productId != null && !_isLoading
-                ? () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ProductDetailPage(productId: productId),
-                ),
-              ).then((_) {
-                _loadGroupedCarts();
-              });
-            }
-                : null,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [AppColors.primary.withOpacity(0.12), Colors.grey[100]!],
+          Column(
+            children: [
+              GestureDetector(
+                onTap: productId != null && !_isLoading
+                    ? () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProductDetailPage(productId: productId),
+                    ),
+                  ).then((_) {
+                    _loadGroupedCarts();
+                  });
+                }
+                    : null,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    width: 100,
+                    height: 100,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppColors.primary.withOpacity(0.12), Colors.grey[100]!],
+                      ),
+                    ),
+                    child: _isLoading
+                        ? Container(color: Colors.grey[200])
+                        : productImage != null
+                        ? Image.memory(productImage, fit: BoxFit.cover)
+                        : Icon(Icons.image_not_supported_outlined,
+                        color: Colors.grey[400], size: 40),
                   ),
                 ),
-                child: _isLoading
-                    ? Container(color: Colors.grey[200])
-                    : productImage != null
-                    ? Image.memory(productImage, fit: BoxFit.cover)
-                    : Icon(Icons.image_not_supported_outlined,
-                    color: Colors.grey[400], size: 40),
               ),
-            ),
+
+            ],
           ),
           Expanded(
             child: Column(
@@ -796,6 +1182,7 @@ class _CartPageState extends State<CartPage> with TickerProviderStateMixin {
                       ),
                   ],
                 ),
+                _buildToppingsAndExtras(item),
               ],
             ),
           ),

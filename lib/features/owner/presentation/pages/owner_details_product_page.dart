@@ -67,11 +67,22 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
   List<dynamic> _categories = [];
   int? _selectedCategoryId;
   String? _companyName;
+  List<Map<String, dynamic>> _companies = [];
+  int? _selectedCompanyId;
   bool _isLoading = true;
   bool _isLoadingCategories = true;
+  bool _isLoadingCompanies = true;
   bool _isLoadingImages = true;
   String? _categoryError;
+  String? _companyError;
   bool _isSubmitting = false;
+
+  // Toppings and Extras
+  List<Map<String, dynamic>> _toppings = [];
+  List<Map<String, dynamic>> _extras = [];
+  final _toppingNameController = TextEditingController();
+  final _extraNameController = TextEditingController();
+  final _extraPriceController = TextEditingController();
 
   @override
   void initState() {
@@ -98,6 +109,7 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
       _currentUserId = userId;
     });
     _loadCategories();
+    _loadCompanies();
     _loadProduct();
   }
   Future<void> _loadProductImages() async {
@@ -174,7 +186,22 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
       _discountController.text = product['discountPercentage']?.toString() ?? '0';
       _isAvailable = product['available'] ?? true;
       _selectedCategoryId = product['categoryId'];
+      _selectedCompanyId = product['companyId'];
       _finalPrice = product['productFinalePrice']?.toDouble() ?? 0.0;
+
+      // Load toppings and extras
+      if (product['toppings'] != null && product['toppings'] is List) {
+        _toppings = (product['toppings'] as List)
+            .where((item) => item != null && item is Map)
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+      }
+      if (product['extras'] != null && product['extras'] is List) {
+        _extras = (product['extras'] as List)
+            .where((item) => item != null && item is Map)
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .toList();
+      }
 
       // Load company name
       final companyId = product['companyId'];
@@ -255,6 +282,47 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
         ),
       );
       Navigator.pop(context);
+    }
+  }
+
+  Future<void> _loadCompanies() async {
+    try {
+      setState(() {
+        _isLoadingCompanies = true;
+        _companyError = null;
+      });
+      
+      if (_currentUserId == null) {
+        throw Exception('User not authenticated');
+      }
+      
+      final companiesData = await _companyService.getCompanyByUserID(_currentUserId!);
+      List<Map<String, dynamic>> companiesList = [];
+
+      if (companiesData != null) {
+        if (companiesData is List<dynamic>) {
+          companiesList = (companiesData as List<dynamic>)
+              .where((item) => item is Map)
+              .map((item) => Map<String, dynamic>.from(item as Map))
+              .where((company) => company.containsKey('companyId'))
+              .toList();
+        } else if (companiesData is Map) {
+          final dataMap = Map<String, dynamic>.from(companiesData as Map);
+          if (dataMap.containsKey('companyId')) {
+            companiesList = [dataMap];
+          }
+        }
+      }
+
+      setState(() {
+        _companies = companiesList;
+        _isLoadingCompanies = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoadingCompanies = false;
+        _companyError = 'Erreur de chargement des entreprises';
+      });
     }
   }
 
@@ -440,6 +508,10 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
                         _buildPricingCard(),
                         const SizedBox(height: 20),
                         _buildAvailabilityCard(),
+                        const SizedBox(height: 20),
+                        _buildToppingsSection(),
+                        const SizedBox(height: 20),
+                        _buildExtrasSection(),
                       ],
                     ),
                   ),
@@ -1084,6 +1156,8 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
           _buildCompactTextField('Description', _descriptionController, Icons.description_outlined, maxLines: 3, enabled: _isEditMode),
           const SizedBox(height: 12),
           _buildCategoryDropdown(),
+          const SizedBox(height: 12),
+          _buildCompanyDropdown(),
         ],
       ),
     );
@@ -1382,6 +1456,320 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
     );
   }
 
+  Widget _buildToppingsSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: (_isEditMode ? AppColors.accent : AppColors.primary).withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Garnitures', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _isEditMode ? AppColors.accent : AppColors.primary)),
+          const SizedBox(height: 12),
+          if (_isEditMode) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _toppingNameController,
+                    decoration: InputDecoration(
+                      hintText: 'ex: Fromage extra',
+                      prefixIcon: const Icon(Icons.restaurant, color: AppColors.primary),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _addTopping,
+                  icon: const Icon(Icons.add_circle, color: AppColors.primary, size: 28),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (_toppings.isNotEmpty) ...[
+            ...List.generate(_toppings.length, (index) {
+              final topping = _toppings[index];
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        topping['toppingName'] ?? 'Garniture',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+
+                    if (_isEditMode) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () => _removeTopping(index),
+                        icon: const Icon(Icons.delete, color: Colors.red, size: 18),
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: Text(
+                  'Aucune garniture ajoutée',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExtrasSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: (_isEditMode ? AppColors.accent : AppColors.primary).withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Extras', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _isEditMode ? AppColors.accent : AppColors.primary)),
+          const SizedBox(height: 12),
+          if (_isEditMode) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _extraNameController,
+                    decoration: InputDecoration(
+                      hintText: 'ex: Boisson',
+                      prefixIcon: const Icon(Icons.add_box, color: AppColors.primary),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 100,
+                  child: TextField(
+                    controller: _extraPriceController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: InputDecoration(
+                      hintText: '0.00',
+                      prefixIcon: const Icon(Icons.attach_money, color: AppColors.primary),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: _addExtra,
+                  icon: const Icon(Icons.add_circle, color: AppColors.primary, size: 28),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (_extras.isNotEmpty) ...[
+            ...List.generate(_extras.length, (index) {
+              final extra = _extras[index];
+              return Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        extra['extraName'] ?? 'Extra',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Text(
+                      '${extra['extraPrice'] ?? 0} TND',
+                      style: TextStyle(
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (_isEditMode) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () => _removeExtra(index),
+                        icon: const Icon(Icons.delete, color: Colors.red, size: 18),
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }),
+          ] else ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: Text(
+                  'Aucun extra ajouté',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _addTopping() {
+    final name = _toppingNameController.text.trim();
+
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Veuillez entrer un nom de garniture'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (name.length > 100) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Le nom de la garniture ne doit pas dépasser 100 caractères'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _toppings.add({
+        'toppingName': name,
+        // toppingId will be null for new toppings, present for existing ones
+      });
+      _toppingNameController.clear();
+    });
+  }
+
+  void _removeTopping(int index) {
+    setState(() {
+      _toppings.removeAt(index);
+    });
+  }
+
+  void _addExtra() {
+    final name = _extraNameController.text.trim();
+    final priceText = _extraPriceController.text.trim();
+
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Veuillez entrer un nom pour l\'extra'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (priceText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Veuillez entrer un prix pour l\'extra'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    final price = double.tryParse(priceText);
+
+    if (price == null || price < 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Veuillez entrer un prix valide'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    if (name.length > 100) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Le nom de l\'extra ne doit pas dépasser 100 caractères'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _extras.add({
+        'extraName': name,
+        'extraPrice': price,
+        // extraId will be null for new extras, present for existing ones
+      });
+      _extraNameController.clear();
+      _extraPriceController.clear();
+    });
+  }
+
+  void _removeExtra(int index) {
+    setState(() {
+      _extras.removeAt(index);
+    });
+  }
+
   Widget _buildActionButtons() {
     return Column(
       children: [
@@ -1451,33 +1839,73 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
       setState(() => _isSubmitting = true);
 
       try {
-        final DateTime now = DateTime.now();
-        final List<int> dateList = [now.year, now.month, now.day, now.hour, now.minute, now.second];
+        // Validate required fields
+        if (_selectedCategoryId == null) {
+          throw Exception('Veuillez sélectionner une catégorie');
+        }
 
-        final Map<String, dynamic> product = {
-          "productName": _nameController.text.trim(),
-          "productDescription": _descriptionController.text.trim(),
-          "productPrice": double.parse(_priceController.text),
-          "productFinalePrice": _finalPrice,
-          "discountPercentage": double.parse(_discountController.text.isEmpty ? '0' : _discountController.text),
-          "categoryId": _selectedCategoryId,
-          "userId": _currentUserId,
-          "createdAt": dateList,
-          "lastUpdated": dateList,
-          "attachmentIds": [],
-          "available": _isAvailable,
-          "reviewIds": [],
-          "orderItemIds": []
+        final price = double.tryParse(_priceController.text) ?? 0.0;
+        final discount = double.tryParse(_discountController.text) ?? 0.0;
+
+        if (price <= 0) {
+          throw Exception('Le prix doit être supérieur à 0');
+        }
+
+        // Build toppings list with proper structure
+        final List<Map<String, dynamic>> toppingsForApi = _toppings.map((topping) {
+          return {
+            'toppingName': topping['toppingName'] ?? '',
+            // Include toppingId if it exists (for existing toppings)
+            if (topping['toppingId'] != null) 'toppingId': topping['toppingId'],
+          };
+        }).toList();
+
+        // Build extras list with proper structure
+        final List<Map<String, dynamic>> extrasForApi = _extras.map((extra) {
+          return {
+            'extraName': extra['extraName'] ?? '',
+            'extraPrice': double.tryParse(extra['extraPrice'].toString()) ?? 0.0,
+            // Include extraId if it exists (for existing extras)
+            if (extra['extraId'] != null) 'extraId': extra['extraId'],
+          };
+        }).toList();
+
+        // Build product update payload
+        final Map<String, dynamic> productPayload = {
+          'productId': widget.productId,
+          'productName': _nameController.text.trim(),
+          'productDescription': _descriptionController.text.trim(),
+          'productPrice': price,
+          'productFinalePrice': _finalPrice,
+          'discountPercentage': discount,
+          'categoryId': _selectedCategoryId,
+          'companyId': _selectedCompanyId,
+          'userId': _currentUserId,
+          'available': _isAvailable,
+          'toppings': toppingsForApi,
+          'extras': extrasForApi,
+          // These are typically managed server-side
+          'attachmentIds': [],
+          'reviewIds': [],
+          'orderItemIds': [],
         };
 
-        await _productService.updateProduct(widget.productId, product);
+        debugPrint('📤 Sending product update: $productPayload');
 
+        // Update product
+        await _productService.updateProduct(widget.productId, productPayload);
+
+        // Delete old attachments
         for (var id in _originalAttachmentIds) {
           try {
             await _attachmentService.deleteAttachment(id);
-          } catch (e) {}
+          } catch (e) {
+            debugPrint('⚠️ Error deleting attachment $id: $e');
+          }
         }
 
+        // Upload new attachments
+        // Combine existing images that weren't deleted with new images
         final allBytes = [..._existingImages, ..._selectedImages];
         final allNames = [
           ..._existingAttachments.map((a) => a['fileName'] ?? 'image.jpg'),
@@ -1489,34 +1917,62 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
         ];
 
         for (int i = 0; i < allBytes.length; i++) {
-          await _attachmentService.createAttachment(
-            fileBytes: allBytes[i],
-            fileName: allNames[i],
-            contentType: allTypes[i],
-            entityType: 'Product',
-            entityId: widget.productId,
-          );
+          try {
+            await _attachmentService.createAttachment(
+              fileBytes: allBytes[i],
+              fileName: allNames[i],
+              contentType: allTypes[i],
+              entityType: 'Product',
+              entityId: widget.productId,
+            );
+          } catch (e) {
+            debugPrint('⚠️ Error uploading attachment: $e');
+          }
         }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Row(children: [const Icon(Icons.check_circle, color: Colors.white), const SizedBox(width: 12), const Expanded(child: Text('Produit mis à jour avec succès!', style: TextStyle(fontWeight: FontWeight.w600)))]),
+              content: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.white),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Produit mis à jour avec succès!',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
               backgroundColor: const Color(0xFF00B894),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               duration: const Duration(seconds: 3),
             ),
           );
+
           setState(() => _isEditMode = false);
           widget.onProductUpdated?.call();
           Navigator.of(context).pop(true);
         }
       } catch (e) {
+        debugPrint('❌ Error updating product: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Row(children: [const Icon(Icons.error_outline, color: Colors.white), const SizedBox(width: 12), Expanded(child: Text('Erreur: ${e.toString()}', style: const TextStyle(fontWeight: FontWeight.w600)))]),
+              content: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.white),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Erreur: ${e.toString()}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
               backgroundColor: Colors.red,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1530,7 +1986,18 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Row(children: [const Icon(Icons.warning_amber_rounded, color: Colors.white), const SizedBox(width: 12), const Expanded(child: Text('Veuillez corriger les erreurs dans le formulaire', style: TextStyle(fontWeight: FontWeight.w600)))]),
+          content: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.white),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Veuillez corriger les erreurs dans le formulaire',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
           backgroundColor: Colors.orange,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1585,12 +2052,91 @@ class _ProductDetailsDialogState extends State<ProductDetailsDialog> with Single
     );
   }
 
+  Widget _buildCompanyDropdown() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(18),
+        border: _isEditMode ? Border.all(color: AppColors.accent.withOpacity(0.3), width: 2) : null,
+      ),
+      child: _isLoadingCompanies
+          ? Container(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+            const SizedBox(width: 16),
+            Text('Chargement des entreprises...', style: TextStyle(color: Colors.grey[600])),
+          ],
+        ),
+      )
+          : _companyError != null
+          ? Container(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red),
+            const SizedBox(width: 12),
+            Expanded(child: Text(_companyError!, style: const TextStyle(color: Colors.red))),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: _loadCompanies, tooltip: 'Réessayer'),
+          ],
+        ),
+      )
+          : _companies.isEmpty
+          ? Container(
+        padding: const EdgeInsets.all(20),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.orange[700]),
+            const SizedBox(width: 12),
+            const Expanded(child: Text('Aucune entreprise disponible.', style: TextStyle(color: Colors.orange))),
+          ],
+        ),
+      )
+          : DropdownButtonFormField<int>(
+        value: _selectedCompanyId,
+        decoration: InputDecoration(
+          labelText: 'Entreprise',
+          prefixIcon: Icon(Icons.business_rounded, color: _isEditMode ? AppColors.accent : AppColors.primary, size: 22),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide(color: _isEditMode ? AppColors.accent : AppColors.primary, width: 2)),
+          disabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(18), borderSide: BorderSide.none),
+          filled: true,
+          fillColor: _isEditMode ? Colors.white : Colors.grey.shade50,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        ),
+        items: _companies.map<DropdownMenuItem<int>>((company) {
+          return DropdownMenuItem<int>(
+            value: company['companyId'],
+            child: Row(
+              children: [
+                Container(width: 8, height: 8, decoration: BoxDecoration(color: (_isEditMode ? AppColors.accent : AppColors.primary).withOpacity(0.6), shape: BoxShape.circle)),
+                const SizedBox(width: 12),
+                Expanded(child: Text(company['companyName'] ?? 'Entreprise ${company['companyId']}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis)),
+              ],
+            ),
+          );
+        }).toList(),
+        onChanged: _isEditMode ? (int? newValue) => setState(() => _selectedCompanyId = newValue) : null,
+        validator: (value) => value == null ? 'Veuillez sélectionner une entreprise' : null,
+        icon: Icon(Icons.keyboard_arrow_down_rounded, color: _isEditMode ? AppColors.accent : AppColors.primary),
+        isExpanded: true,
+        dropdownColor: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
     _discountController.dispose();
     _descriptionController.dispose();
+    _toppingNameController.dispose();
+    _extraNameController.dispose();
+    _extraPriceController.dispose();
     _animationController.dispose();
     super.dispose();
   }

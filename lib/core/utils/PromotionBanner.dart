@@ -87,7 +87,7 @@ class _FoodDeliveryBannerState extends State<PromotionBanner>
             .animate(CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic)),
         child: Container(
           height: 180,
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 10),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topLeft,

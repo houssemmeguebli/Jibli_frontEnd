@@ -13,9 +13,9 @@ import '../../../../core/services/auth_service.dart';
 import 'dart:typed_data';
 import '../../../../core/utils/PromotionBanner.dart';
 import '../widgets/product_card.dart';
-import 'product_detail_page.dart';
-import 'company_page.dart';
-import 'all_companies_page.dart';
+import 'customer_product_detail_page.dart';
+import 'customer_company_page.dart';
+import 'customer_all_companies_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -442,9 +442,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         const SizedBox(height: 32),
                         _buildFilteredProductsSection(isMobile),
                         const SizedBox(height: 32),
-                        _buildProductsSection(isMobile),
-                        const SizedBox(height: 32),
                         _buildPromotionBanner(bannerIndex: 2),
+                        const SizedBox(height: 32),
+                        _buildProductsSection(isMobile),
                         const SizedBox(height: 32),
                         _buildBenefitsSection(isMobile)
                       ],

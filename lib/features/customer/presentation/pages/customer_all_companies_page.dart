@@ -4,7 +4,7 @@ import '../../../../core/services/pagination_service.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/company_service.dart';
 import '../../../../core/services/attachment_service.dart';
-import 'company_page.dart';
+import 'customer_company_page.dart';
 
 class AllCompaniesPage extends StatefulWidget {
   const AllCompaniesPage({super.key});

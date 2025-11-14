@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
@@ -11,8 +12,7 @@ import '../../../../core/services/cart_item_service.dart';
 import '../../../../core/services/review_service.dart';
 import '../../../../core/services/cart_notifier.dart';
 import '../../../../core/services/auth_service.dart';
-import '../widgets/product_card.dart';
-import 'product_detail_page.dart';
+import '../widgets/product_list_item.dart';
 
 class CompanyPage extends StatefulWidget {
   final int companyId;
@@ -41,16 +41,21 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
   List<Uint8List> _companyImages = [];
   Map<int, Uint8List> _productImages = {};
   List<Map<String, dynamic>> _reviews = [];
+  
+  // Category-based state
+  Map<int?, List<Map<String, dynamic>>> _productsByCategory = {};
+  List<int?> _categoryOrder = [];
+  final ScrollController _productScrollController = ScrollController();
+  String? _currentScrollCategory;
 
   bool _isLoading = true;
   bool _showFilters = false;
-  bool _showOnlyAvailable = false;
 
   int _selectedImageIndex = 0;
   int? _selectedCategoryId;
 
   String _sortBy = 'latest';
-  String _gridViewType = 'grid';
+
   double _rating = 5.0;
 
   // Controllers
@@ -74,6 +79,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
     super.initState();
     _initializeControllers();
     _searchController.addListener(_applyFilters);
+    _productScrollController.addListener(_updateCurrentCategory);
 
     // Load user and company data in parallel - FASTER
     Future.wait([
@@ -104,6 +110,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
     _fadeController.dispose();
     _reviewController.dispose();
     _searchController.dispose();
+    _productScrollController.dispose();
     super.dispose();
   }
 
@@ -131,14 +138,18 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
         });
       }
 
-      // Load all data in parallel instead of sequential - 3-4x FASTER
+      // Load categories FIRST, then other data
+      await _loadCategories();
+
+      // Load all other data in parallel
       await Future.wait([
         _loadReviews(),
-        _loadCategories(),
         _loadCompanyImages(),
         _loadProductImages(),
-      ], eagerError: false); // Continue even if one fails
+      ], eagerError: false);
 
+      // Now apply filters and group by category
+      _applyFilters();
       _fadeController.forward();
       if (mounted) setState(() => _isLoading = false);
     } catch (e) {
@@ -273,6 +284,25 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
           if (mounted) {
             setState(() => _categories = categories);
             debugPrint('✅ Loaded ${categories.length} categories');
+
+            // Debug: Print all category IDs and names
+            for (var category in categories) {
+              debugPrint('📌 Category - ID: ${category['categoryId']}, Name: ${category['name']}');
+            }
+
+            // Debug: Check which product categories don't have matching category records
+            final productCategoryIds = _allProducts
+                .map((p) => p['categoryId'] as int?)
+                .toSet();
+
+            final categoryCategoryIds = _categories
+                .map((c) => c['categoryId'] as int?)
+                .toSet();
+
+            final missingCategories = productCategoryIds.difference(categoryCategoryIds);
+            if (missingCategories.isNotEmpty) {
+              debugPrint('⚠️ Products reference these category IDs that don\'t exist: $missingCategories');
+            }
           }
         }
       }
@@ -281,7 +311,6 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
       if (mounted) setState(() => _categories = []);
     }
   }
-
   Future<void> _loadCompanyImages() async {
     try {
       if (_company == null) return;
@@ -367,15 +396,98 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
           final productCategoryId = product['categoryId'] as int?;
           final matchesCategory = _selectedCategoryId == null || productCategoryId == _selectedCategoryId;
 
-          final isAvailable = product['available'] == true || product['available'] == 1;
-          final matchesAvailability = !_showOnlyAvailable || isAvailable;
-
-          return matchesSearch && matchesCategory && matchesAvailability;
+          return matchesSearch && matchesCategory;
         }).toList();
 
         _sortProducts();
+        _groupProductsByCategory();
       });
     });
+  }
+
+  void _groupProductsByCategory() {
+    _productsByCategory.clear();
+    _categoryOrder.clear();
+
+    for (var product in _filteredProducts) {
+      final categoryId = product['categoryId'] as int?;
+
+      // Check if this category ID exists in our categories list
+      final categoryExists = _categories.any((c) => c['categoryId'] == categoryId);
+
+      // Only add products that have valid categories
+      if (categoryExists) {
+        if (!_productsByCategory.containsKey(categoryId)) {
+          _productsByCategory[categoryId] = [];
+          _categoryOrder.add(categoryId);
+        }
+        _productsByCategory[categoryId]!.add(product);
+      } else {
+        // Log orphaned products
+        debugPrint('⚠️ Skipping product "${product['productName']}" - Category ID $categoryId does not exist');
+      }
+    }
+
+    // Debug output
+    debugPrint('🔍 Product grouping (filtered):');
+    for (var categoryId in _categoryOrder) {
+      final count = _productsByCategory[categoryId]?.length ?? 0;
+      final name = _getCategoryName(categoryId);
+      debugPrint('  - $name (ID: $categoryId): $count products');
+    }
+  }
+  String _getCategoryName(int? categoryId) {
+    if (categoryId == null) return 'Sans catégorie';
+
+    try {
+      // Search for the category
+      final category = _categories.firstWhere(
+            (c) => c['categoryId'] == categoryId,
+        orElse: () => <String, dynamic>{},
+      );
+
+      if (category.isEmpty) {
+        debugPrint('⚠️ Category not found for ID: $categoryId');
+        debugPrint('📋 Available categories: ${_categories.map((c) => 'ID: ${c['categoryId']}, Name: ${c['name']}').join(', ')}');
+        return 'Catégorie inconnue';
+      }
+
+      final name = category['name']?.toString().trim();
+      if (name == null || name.isEmpty) {
+        return 'Catégorie inconnue';
+      }
+
+      return name;
+    } catch (e) {
+      debugPrint('❌ Error getting category name: $e');
+      return 'Catégorie inconnue';
+    }
+  }
+
+  void _updateCurrentCategory() {
+    if (_productsByCategory.isEmpty) return;
+
+    final scrollOffset = _productScrollController.offset;
+    double currentOffset = 0.0;
+    
+    for (final categoryId in _categoryOrder) {
+      final products = _productsByCategory[categoryId] ?? [];
+      final categoryHeaderHeight = 60.0;
+      final productItemHeight = 124.0;
+      final categoryHeight = categoryHeaderHeight + (products.length * productItemHeight);
+      
+      if (scrollOffset >= currentOffset && scrollOffset < currentOffset + categoryHeight) {
+        final categoryName = _getCategoryName(categoryId);
+        if (mounted && categoryName != _currentScrollCategory) {
+          setState(() {
+            _currentScrollCategory = categoryName;
+            _selectedCategoryId = categoryId;
+          });
+        }
+        break;
+      }
+      currentOffset += categoryHeight;
+    }
   }
 
 
@@ -794,31 +906,42 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
       ),
     );
   }
-  bool _isCompanyOpen(String? timeOpen, String? timeClose) {
-    if (timeOpen == null || timeClose == null) return true; // Default to open if no times
+  bool _isCompanyOpen(dynamic timeOpen, dynamic timeClose) {
+    if (timeOpen == null || timeClose == null) return true;
 
     try {
       final now = DateTime.now();
       final currentTime = TimeOfDay.fromDateTime(now);
 
-      // Parse times - handle both "HH:mm" and "HH:mm:ss" formats
-      final openParts = timeOpen.split(':');
-      final closeParts = timeClose.split(':');
+      int openHour, openMinute, closeHour, closeMinute;
 
-      final open = TimeOfDay(
-        hour: int.parse(openParts[0]),
-        minute: int.parse(openParts[1]),
-      );
+      // Handle List format [hour, minute]
+      if (timeOpen is List && timeOpen.length >= 2) {
+        openHour = timeOpen[0] as int;
+        openMinute = timeOpen[1] as int;
+      } else if (timeOpen is String) {
+        final openParts = timeOpen.split(':');
+        openHour = int.parse(openParts[0]);
+        openMinute = int.parse(openParts[1]);
+      } else {
+        return true;
+      }
 
-      final close = TimeOfDay(
-        hour: int.parse(closeParts[0]),
-        minute: int.parse(closeParts[1]),
-      );
+      if (timeClose is List && timeClose.length >= 2) {
+        closeHour = timeClose[0] as int;
+        closeMinute = timeClose[1] as int;
+      } else if (timeClose is String) {
+        final closeParts = timeClose.split(':');
+        closeHour = int.parse(closeParts[0]);
+        closeMinute = int.parse(closeParts[1]);
+      } else {
+        return true;
+      }
 
       // Convert to minutes for easier comparison
       final currentMinutes = currentTime.hour * 60 + currentTime.minute;
-      final openMinutes = open.hour * 60 + open.minute;
-      final closeMinutes = close.hour * 60 + close.minute;
+      final openMinutes = openHour * 60 + openMinute;
+      final closeMinutes = closeHour * 60 + closeMinute;
 
       // Handle case where closing time is next day (e.g., 23:00 to 06:00)
       if (closeMinutes < openMinutes) {
@@ -828,7 +951,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
       }
     } catch (e) {
       debugPrint('Error checking company hours: $e');
-      return true; // Default to open if parsing fails
+      return true;
     }
   }
   Widget _buildCompanyInfo() {
@@ -839,8 +962,8 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
     final companyDescription = _company!['companyDescription']?.toString();
     final companyPhone = _company!['companyPhone']?.toString();
     final companyAddress = _company!['companyAddress']?.toString();
-    final timeOpen = _company!['timeOpen']?.toString();
-    final timeClose = _company!['timeClose']?.toString();
+    final timeOpen = _company!['timeOpen'];
+    final timeClose = _company!['timeClose'];
 
     // Check if company is currently open
     final isOpen = _isCompanyOpen(timeOpen, timeClose);
@@ -1043,7 +1166,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
               iconColor: Colors.purple[600]!,
               backgroundColor: Colors.purple[50]!,
               borderColor: Colors.purple[200]!,
-              title: '$timeOpen - $timeClose',
+              title: '${_formatTimeToAmPm(timeOpen)} - ${_formatTimeToAmPm(timeClose)}',
               status: isOpen ? 'Ouvert' : 'Fermé',
               isOpen: isOpen,
             ),
@@ -1076,70 +1199,127 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
     bool isClickable = false,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: borderColor,
-          width: 1,
-        ),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: iconColor.withOpacity(0.06),
-            blurRadius: 6,
-            offset: const Offset(0, 1.5),
+            color: iconColor.withOpacity(0.12),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+            spreadRadius: 2,
+          ),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6.5),
-                decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(
-                  icon,
-                  color: iconColor,
-                  size: 16,
-                ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  backgroundColor.withOpacity(0.85),
+                  backgroundColor.withOpacity(0.65),
+                ],
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black87,
-                    letterSpacing: -0.2,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: borderColor.withOpacity(0.4),
+                width: 1.5,
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey[600],
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.1,
-              height: 1.3,
             ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header Row with Icon
+                Row(
+                  children: [
+                    // Modern Icon Container with Gradient
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            iconColor.withOpacity(0.22),
+                            iconColor.withOpacity(0.12),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: iconColor.withOpacity(0.15),
+                          width: 1.2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: iconColor.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        icon,
+                        color: iconColor,
+                        size: 18,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Title
+                    Expanded(
+                      child: ShaderMask(
+                        shaderCallback: (bounds) => LinearGradient(
+                          colors: [
+                            Colors.black87,
+                            Colors.black54,
+                          ],
+                        ).createShader(bounds),
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            letterSpacing: -0.3,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Subtitle with Enhanced Styling
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 0),
+                  child: Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.black54.withOpacity(0.8),
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                      height: 1.4,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1352,12 +1532,36 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
         Expanded(
           child: _filteredProducts.isEmpty
               ? _buildEmptyProductsState()
-              : _gridViewType == 'grid'
-              ? _buildProductGrid()
-              : _buildProductList(),
+              : _buildProductListByCategory(),
         ),
       ],
     );
+  }
+  String _formatTimeToAmPm(dynamic timeData) {
+    try {
+      if (timeData == null) return '--';
+      
+      int hour, minute;
+      
+      if (timeData is List && timeData.length >= 2) {
+        hour = timeData[0] as int;
+        minute = timeData[1] as int;
+      } else if (timeData is String) {
+        final parts = timeData.split(':');
+        if (parts.length < 2) return timeData;
+        hour = int.parse(parts[0]);
+        minute = int.parse(parts[1]);
+      } else {
+        return timeData.toString();
+      }
+      
+      String period = hour >= 12 ? 'PM' : 'AM';
+      int displayHour = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+      
+      return '${displayHour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
+    } catch (e) {
+      return timeData?.toString() ?? '--';
+    }
   }
 
   Widget _buildSearchBar() {
@@ -1436,15 +1640,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
           ),
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _buildSortDropdown()),
-            const SizedBox(width: 12),
-            _buildViewToggle(),
-            const SizedBox(width: 12),
-            _buildAvailabilityFilter(),
-          ],
-        ),
+        _buildSortDropdown(),
       ],
     );
   }
@@ -1558,60 +1754,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildViewToggle() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!, width: 1),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            icon: Icon(
-                Icons.dashboard_rounded,
-                color: _gridViewType == 'grid' ? AppColors.primary : Colors.grey[400],
-                size: 20
-            ),
-            onPressed: () => setState(() => _gridViewType = 'grid'),
-            splashRadius: 20,
-          ),
-          Container(width: 1, height: 20, color: Colors.grey[300]),
-          IconButton(
-            icon: Icon(
-                Icons.list_rounded,
-                color: _gridViewType == 'list' ? AppColors.primary : Colors.grey[400],
-                size: 20
-            ),
-            onPressed: () => setState(() => _gridViewType = 'list'),
-            splashRadius: 20,
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildAvailabilityFilter() {
-    return FilterChip(
-      label: const Text('Disponible'),
-      selected: _showOnlyAvailable,
-      onSelected: (selected) {
-        setState(() => _showOnlyAvailable = selected);
-        _applyFilters();
-      },
-      backgroundColor: Colors.white,
-      selectedColor: AppColors.primary.withOpacity(0.2),
-      side: BorderSide(
-        color: _showOnlyAvailable ? AppColors.primary : Colors.grey[200]!,
-        width: _showOnlyAvailable ? 2 : 1,
-      ),
-      labelStyle: TextStyle(
-        color: _showOnlyAvailable ? AppColors.primary : Colors.grey[600],
-        fontWeight: _showOnlyAvailable ? FontWeight.w700 : FontWeight.w600,
-        fontSize: 13,
-      ),
-    );
-  }
 
   Widget _buildEmptyProductsState() {
     return Center(
@@ -1651,49 +1794,7 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
       ),
     );
   }
-  Widget _buildProductGrid() {
-    return GridView.builder(
-      padding: EdgeInsets.zero,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.52,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 16,
-      ),
-      itemCount: _filteredProducts.length,
-      // ADD repaint boundary and cacheExtent
-      cacheExtent: 500, // Pre-render next 500px
-      addAutomaticKeepAlives: true,
-      addRepaintBoundaries: true,
-      itemBuilder: (context, index) {
-        final product = _filteredProducts[index];
-        final productId = product['productId'] as int?;
-        final productImage = productId != null ? _productImages[productId] : null;
 
-        return RepaintBoundary( // ADD THIS
-          child: ProductCard(
-            name: product['productName']?.toString() ?? 'Produit',
-            price: (product['productPrice'] ?? 0).toDouble(),
-            imageBytes: productImage,
-            discount: (product['discountPercentage'] ?? 0).toDouble(),
-            finalPrice: product['productFinalePrice'],
-            isAvailable: product['available'] == true || product['available'] == 1,
-            onTap: () {
-              if (productId != null) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ProductDetailPage(productId: productId),
-                  ),
-                );
-              }
-            },
-            onAddToCart: () => _addToCart(product),
-          ),
-        );
-      },
-    );
-  }
 
   Widget _buildProductList() {
     return ListView.builder(
@@ -1708,185 +1809,18 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
         final productId = product['productId'] as int?;
         final productImage = productId != null ? _productImages[productId] : null;
 
-        return RepaintBoundary( // ADD THIS
-          child: _buildProductListItem(product, productId, productImage),
+        return RepaintBoundary(
+          child: ProductListItem(
+            product: product,
+            productId: productId,
+            productImage: productImage,
+            onAddToCart: () => _addToCart(product),
+          ),
         );
       },
     );
   }
-  Widget _buildProductListItem(
-      Map<String, dynamic> product,
-      int? productId,
-      Uint8List? productImage,
-      ) {
-    final productName = product['productName']?.toString() ?? 'Produit';
-    final productPrice = (product['productPrice'] ?? 0).toDouble();
-    final discountPercentage = (product['discountPercentage'] ?? 0).toDouble();
-    final isAvailable = product['available'] == true || product['available'] == 1;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 8
-          )
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 100,
-            height: 100,
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey[200]!, width: 1),
-            ),
-            child: productImage != null
-                ? ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.memory(productImage, fit: BoxFit.cover),
-            )
-                : Icon(Icons.image, color: Colors.grey[300], size: 40),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  productName,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Text(
-                      '${productPrice.toStringAsFixed(2)} DT',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.black,
-                      ),
-                    ),
-                    if (discountPercentage > 0) ...[
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                              colors: [Colors.red[50]!, Colors.red[100]!]
-                          ),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: Colors.red[300]!, width: 1),
-                        ),
-                        child: Text(
-                          '-${discountPercentage.toStringAsFixed(0)}%',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.red[600]
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isAvailable ? Colors.green[50] : Colors.red[50],
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: isAvailable ? Colors.green[300]! : Colors.red[300]!,
-                      width: 1,
-                    ),
-                  ),
-                  child: Text(
-                    isAvailable ? 'En stock' : 'Rupture',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: isAvailable ? Colors.green[700] : Colors.red[700],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              InkWell(
-                onTap: () {
-                  if (productId != null) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProductDetailPage(productId: productId),
-                      ),
-                    );
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                      Icons.arrow_forward_rounded,
-                      color: AppColors.primary,
-                      size: 20
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              InkWell(
-                onTap: () => _addToCart(product),
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                        colors: [AppColors.primary, AppColors.primary.withOpacity(0.8)]
-                    ),
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
-                          blurRadius: 8
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                      Icons.add_shopping_cart_rounded,
-                      color: Colors.white,
-                      size: 20
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildReviewsTab() {
     return SingleChildScrollView(
@@ -2961,6 +2895,258 @@ class _CompanyPageState extends State<CompanyPage> with TickerProviderStateMixin
             ),
           ),
         ],
+      ),
+    );
+  }
+
+
+  // Replace the _buildProductListByCategory and _buildCategoryHeader methods with this:
+
+  Widget _buildProductListByCategory() {
+    if (_productsByCategory.isEmpty) {
+      return _buildEmptyProductsState();
+    }
+
+    return ListView.builder(
+      controller: _productScrollController,
+      padding: const EdgeInsets.only(bottom: 16),
+      itemCount: _categoryOrder.length,
+      itemBuilder: (context, categoryIndex) {
+        final categoryId = _categoryOrder[categoryIndex];
+        final products = _productsByCategory[categoryId] ?? [];
+        final categoryName = _getCategoryName(categoryId);
+
+        if (products.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Category Header
+            _buildCategoryHeader(categoryName, products.length),
+
+            // Products in this category
+            ...products.asMap().entries.map((entry) {
+              final productIndex = entry.key;
+              final product = entry.value;
+              final productId = product['productId'] as int?;
+              final productImage = productId != null ? _productImages[productId] : null;
+
+              return Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: productIndex == 0 ? 8 : 4,
+                ),
+                child: RepaintBoundary(
+                  child: ProductListItem(
+                    product: product,
+                    productId: productId,
+                    productImage: productImage,
+                    onAddToCart: () => _addToCart(product),
+                  ),
+                ),
+              );
+            }).toList(),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCategoryHeader(String categoryName, int productCount) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.primary.withOpacity(0.9),
+                  AppColors.primary.withOpacity(0.7),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.15),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                  spreadRadius: 2,
+                ),
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                // Animated Category Icon
+                TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: 1),
+                  duration: const Duration(milliseconds: 600),
+                  curve: Curves.elasticOut,
+                  builder: (context, value, child) {
+                    return Transform.scale(
+                      scale: value,
+                      child: Container(
+                        padding: const EdgeInsets.all(11),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.white.withOpacity(0.35),
+                              Colors.white.withOpacity(0.15),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.white.withOpacity(0.2),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          Icons.category_rounded,
+                          color: Colors.white,
+                          size: 22,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 14),
+
+                // Category Name & Count with Modern Typography
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Category Title
+                      ShaderMask(
+                        shaderCallback: (bounds) => LinearGradient(
+                          colors: [
+                            Colors.white,
+                            Colors.white.withOpacity(0.9),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ).createShader(bounds),
+                        child: Text(
+                          categoryName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
+                            height: 1.2,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // Product Count Text
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '$productCount produit${productCount > 1 ? 's' : ''} disponible${productCount > 1 ? 's' : ''}',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.9),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.3,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
+                // Modern Product Count Badge with Animation
+                ScaleTransition(
+                  scale: Tween<double>(begin: 0.8, end: 1).animate(
+                    CurvedAnimation(
+                      parent: AlwaysStoppedAnimation<double>(1),
+                      curve: Curves.easeOutBack,
+                    ),
+                  ),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.white.withOpacity(0.25),
+                          Colors.white.withOpacity(0.15),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.2),
+                        width: 1.5,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.white.withOpacity(0.15),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '$productCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
+                        Text(
+                          'items',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.7),
+                            fontSize: 8,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

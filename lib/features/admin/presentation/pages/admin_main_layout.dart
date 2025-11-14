@@ -44,6 +44,31 @@ class _AdminMainLayoutState extends State<AdminMainLayout> {
   ];
 
   Future<void> _handleLogout() async {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Confirmation de déconnexion'),
+          content: const Text('Êtes-vous sûr de vouloir vous déconnecter?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Annuler'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _performLogout();
+              },
+              child: const Text('Déconnexion', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _performLogout() async {
     try {
       await _authService.logout();
       if (mounted) {

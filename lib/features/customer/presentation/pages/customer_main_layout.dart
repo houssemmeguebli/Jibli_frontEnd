@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:frontend/features/customer/presentation/pages/cart_page.dart';
+import 'package:frontend/features/customer/presentation/pages/customer_cart_page.dart';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/cart_service.dart';
 import '../../../../core/services/cart_notifier.dart';
 import '../../../../core/services/auth_service.dart';
-import 'home_page.dart';
+import 'customer_home_page.dart';
 import 'customer_orders_page.dart';
-import 'favorites_page.dart';
+import 'customer_favorites_page.dart';
 import 'profile_page.dart';
 
 class CustomerMainLayout extends StatefulWidget {

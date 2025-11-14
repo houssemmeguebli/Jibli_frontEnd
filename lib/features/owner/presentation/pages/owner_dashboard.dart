@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:skeletonizer/skeletonizer.dart';
-import 'package:frontend/features/owner/presentation/pages/add_product_page.dart';
-import 'package:frontend/features/owner/presentation/pages/owner_products_page.dart';
+import 'package:frontend/features/owner/presentation/pages/owner_add_product_page.dart';
 import 'dart:typed_data';
 import '../../../../core/theme/theme.dart';
 import '../../../../core/services/product_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/auth_service.dart';
-import '../widgets/owner_dashboard_card.dart';
-import 'owner_add_product_page.dart';
 import 'owner_details_product_page.dart';
 
 class OwnerDashboard extends StatefulWidget {
@@ -156,7 +153,7 @@ class _OwnerDashboardState extends State<OwnerDashboard>
           opacity: _fadeAnimation,
           child: CustomScrollView(
             slivers: [
-              _buildSliverAppBar(isMobile),
+              SliverToBoxAdapter(child: _buildHeader(isMobile)),
               SliverToBoxAdapter(
                 child: Padding(
                   padding: EdgeInsets.symmetric(
@@ -219,61 +216,73 @@ class _OwnerDashboardState extends State<OwnerDashboard>
     );
   }
 
-  Widget _buildSliverAppBar(bool isMobile) {
-    return SliverAppBar(
-      expandedHeight: isMobile ? 80 : 120,
-      floating: true,
-      pinned: true,
-      elevation: 0,
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.transparent,
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                AppColors.primary,
-                AppColors.primary.withOpacity(0.85),
-              ],
+  Widget _buildHeader(bool isMobile) {
+    return Container(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + (isMobile ? 12 : 16),
+        left: isMobile ? 16 : 24,
+        right: isMobile ? 16 : 24,
+        bottom: isMobile ? 16 : 24,
+      ),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary,
+            AppColors.primary.withOpacity(0.85),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: EdgeInsets.all(isMobile ? 10 : 14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              Icons.dashboard_rounded,
+              color: Colors.white,
+              size: isMobile ? 24 : 32,
             ),
           ),
-          child: Padding(
-            padding: EdgeInsets.only(
-              left: isMobile ? 16 : 28,
-              right: isMobile ? 16 : 28,
-              top: isMobile ? 16 : 24,
-              bottom: isMobile ? 16 : 20,
-            ),
+          const SizedBox(width: 12),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 Text(
                   'Tableau de bord',
                   style: TextStyle(
-                    fontSize: isMobile ? 24 : 28,
-                    fontWeight: FontWeight.w800,
                     color: Colors.white,
+                    fontSize: isMobile ? 22 : 28,
+                    fontWeight: FontWeight.bold,
                     letterSpacing: -0.5,
-                    height: 1.1,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
-                  'Gérez votre boutique',
+                  'Vue d\'ensemble de votre boutique',
                   style: TextStyle(
-                    fontSize: isMobile ? 12 : 13,
-                    color: Colors.white.withOpacity(0.85),
+                    color: Colors.white70,
+                    fontSize: isMobile ? 12 : 15,
                     fontWeight: FontWeight.w500,
-                    letterSpacing: 0.1,
                   ),
                 ),
               ],
             ),
           ),
-        ),
+
+        ],
       ),
     );
   }
@@ -281,6 +290,13 @@ class _OwnerDashboardState extends State<OwnerDashboard>
   Widget _buildStatsGrid(bool isMobile, bool isTablet) {
     final crossCount = isMobile ? 2 : isTablet ? 3 : 4;
     final childAspectRatio = isMobile ? 1.8 : isTablet ? 2.0 : 2.2;
+
+    // Calculate real statistics
+    final availableProducts = _products.where((p) => p['available'] == true).length;
+    final totalRevenue = _products.fold<double>(0.0, (sum, product) => 
+        sum + ((product['productFinalePrice'] ?? product['productPrice'] ?? 0.0) as num).toDouble());
+    final productsWithDiscount = _products.where((p) => 
+        p['discountPercentage'] != null && (p['discountPercentage'] as num) > 0).length;
 
     return GridView.count(
       crossAxisCount: crossCount,
@@ -299,25 +315,25 @@ class _OwnerDashboardState extends State<OwnerDashboard>
           isMobile: isMobile,
         ),
         _buildStatCard(
-          title: 'Commandes',
-          value: '156',
-          icon: Icons.shopping_bag_outlined,
+          title: 'Disponibles',
+          value: '$availableProducts',
+          icon: Icons.check_circle_outlined,
           color: const Color(0xFF10B981),
           delay: 80,
           isMobile: isMobile,
         ),
         _buildStatCard(
-          title: 'Revenus',
-          value: '12 KDT',
+          title: 'Valeur Stock',
+          value: '${totalRevenue.toStringAsFixed(0)} DT',
           icon: Icons.trending_up,
           color: const Color(0xFFF59E0B),
           delay: 160,
           isMobile: isMobile,
         ),
         _buildStatCard(
-          title: 'Clients',
-          value: '89',
-          icon: Icons.people_outline,
+          title: 'En Promotion',
+          value: '$productsWithDiscount',
+          icon: Icons.local_offer_outlined,
           color: const Color(0xFF3B82F6),
           delay: 240,
           isMobile: isMobile,
@@ -498,13 +514,13 @@ class _OwnerDashboardState extends State<OwnerDashboard>
           ),
           const SizedBox(height: 32),
           ElevatedButton.icon(
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (context) => const AddProductPage()),
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AddProductDialog(
+                  onProductAdded: _refresh,
+                ),
               );
-              _refresh();
             },
             icon: const Icon(Icons.add_rounded, size: 20),
             label: const Text('Ajouter un produit'),

@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'dart:typed_data';
-import 'dart:io';
 import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:universal_html/html.dart' as html;
 import '../../../../core/services/pagination_service.dart';
@@ -12,7 +10,6 @@ import '../../../../core/services/product_service.dart';
 import '../../../../core/services/category_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../../../../core/services/auth_service.dart';
-import 'add_product_page.dart';
 import 'owner_add_product_page.dart';
 import 'owner_details_product_page.dart';
 
@@ -888,10 +885,10 @@ class _OwnerProductsPageState extends State<OwnerProductsPage> with SingleTicker
             if (_searchQuery.isEmpty && _selectedFilter == 'Tous')
               ElevatedButton.icon(
                 onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const AddProductPage(),
+                  showDialog(
+                    context: context,
+                    builder: (context) => AddProductDialog(
+                      onProductAdded: _loadProducts,
                     ),
                   );
                   _loadProducts();

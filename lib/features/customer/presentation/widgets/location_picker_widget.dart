@@ -36,7 +36,7 @@ class _LocationPickerWidgetState extends State<LocationPickerWidget> {
     try {
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        _showError('Les services de localisation sont désactivés');
+        _showLocationServiceDialog();
         return;
       }
 
@@ -75,6 +75,29 @@ class _LocationPickerWidgetState extends State<LocationPickerWidget> {
         SnackBar(content: Text(message), backgroundColor: Colors.red),
       );
     }
+  }
+
+  void _showLocationServiceDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Localisation désactivée'),
+        content: const Text('Veuillez activer les services de localisation pour utiliser cette fonctionnalité.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Geolocator.openLocationSettings();
+            },
+            child: const Text('Activer'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _onMapTap(TapPosition tapPosition, LatLng point) {

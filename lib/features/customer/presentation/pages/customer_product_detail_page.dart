@@ -29,6 +29,9 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
   final CartNotifier _cartNotifier = CartNotifier();
   final CompanyService _companyService = CompanyService();
   bool _isEditingReview = false;
+  Map<int, bool> _selectedToppings = {};
+  Map<int, bool> _selectedExtras = {};
+  double _toppingExtraPrice = 0.0;
 
   Map<String, dynamic>? _product;
   Map<String, dynamic>? _companyInfo;
@@ -109,7 +112,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
       if (_currentUserId == null) {
         _currentUserId = await _authService.getUserId();
       }
-      
+
       final product = await _productService.getProductById(widget.productId);
       final reviews = await _reviewService.getReviewsByProduct(widget.productId);
 
@@ -135,6 +138,20 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
         }
       }
 
+      // Initialize toppings and extras selections
+      if (product != null) {
+        final toppings = product['toppings'] as List? ?? [];
+        final extras = product['extras'] as List? ?? [];
+
+        for (var topping in toppings) {
+          _selectedToppings[topping['toppingId'] ?? 0] = false;
+        }
+
+        for (var extra in extras) {
+          _selectedExtras[extra['extraId'] ?? 0] = false;
+        }
+      }
+
       setState(() {
         _product = product;
         _reviews = reviews;
@@ -155,7 +172,26 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
       }
     }
   }
+  // Calculate total price with toppings and extras
+// Calculate total price with toppings and extras
+  double _calculateTotalPrice() {
+    if (_product == null) return 0.0;
 
+    double basePrice = (_product!['productFinalePrice'] ?? _product!['productPrice'] ?? 0.0) as double;
+    double extraPrice = 0.0;
+
+    // Get selected extras price
+    if (_product!['extras'] != null) {
+      final extras = _product!['extras'] as List? ?? [];
+      for (var extra in extras) {
+        if (_selectedExtras[extra['extraId']] == true) {
+          extraPrice += (extra['extraPrice'] ?? 0.0) as double;
+        }
+      }
+    }
+
+    return (basePrice + extraPrice) * _quantity;
+  }
   Future<void> _loadProductImages() async {
     try {
       if (_product == null) return;
@@ -248,13 +284,26 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     if (_currentUserId == null) {
       _currentUserId = await _authService.getUserId();
     }
-    
+
     if (_currentUserId == null) return;
 
     try {
+      // Get selected toppings and extras
+      final selectedToppingIds = _selectedToppings.entries
+          .where((e) => e.value)
+          .map((e) => e.key)
+          .toList();
+
+      final selectedExtraIds = _selectedExtras.entries
+          .where((e) => e.value)
+          .map((e) => e.key)
+          .toList();
+
       await _cartItemService.addProductToUserCart(_currentUserId!, {
         'productId': productId,
         'quantity': _quantity,
+        'selectedToppingIds': selectedToppingIds,
+        'selectedExtraIds': selectedExtraIds,
       });
 
       _cartNotifier.notifyCartChanged();
@@ -270,6 +319,234 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
         _showSnackBar('Erreur: $e', isError: true);
       }
     }
+  }
+  Widget _buildToppingsSection() {
+    if (_product == null || _product!['toppings'] == null) {
+      return const SizedBox.shrink();
+    }
+
+    final toppings = _product!['toppings'] as List? ?? [];
+    if (toppings.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.blue[100]!, Colors.blue[50]!],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.layers_outlined,
+                  color: Colors.blue[700],
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Garnitures',
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: toppings.length,
+            itemBuilder: (context, index) {
+              final topping = toppings[index];
+              final toppingId = topping['toppingId'] ?? 0;
+              final toppingName = topping['toppingName'] ?? 'Garniture';
+              final isSelected = _selectedToppings[toppingId] ?? false;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isSelected ? Colors.blue[300]! : Colors.grey[200]!,
+                    width: isSelected ? 2 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  color: isSelected ? Colors.blue[50] : Colors.white,
+                ),
+                child: CheckboxListTile(
+                  value: isSelected,
+                  onChanged: (bool? value) {
+                    setState(() {
+                      _selectedToppings[toppingId] = value ?? false;
+                    });
+                  },
+                  title: Text(
+                    toppingName,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  checkColor: Colors.white,
+                  activeColor: Colors.blue[600],
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+// New widget to display extras selection
+  Widget _buildExtrasSection() {
+    if (_product == null || _product!['extras'] == null) {
+      return const SizedBox.shrink();
+    }
+
+    final extras = _product!['extras'] as List? ?? [];
+    if (extras.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Colors.purple[100]!, Colors.purple[50]!],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.add_circle_outline,
+                  color: Colors.purple[700],
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Suppléments',
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: -0.3,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: extras.length,
+            itemBuilder: (context, index) {
+              final extra = extras[index];
+              final extraId = extra['extraId'] ?? 0;
+              final extraName = extra['extraName'] ?? 'Supplément';
+              final extraPrice = (extra['extraPrice'] ?? 0.0) as double;
+              final isSelected = _selectedExtras[extraId] ?? false;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isSelected ? Colors.purple[300]! : Colors.grey[200]!,
+                    width: isSelected ? 2 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  color: isSelected ? Colors.purple[50] : Colors.white,
+                ),
+                child: CheckboxListTile(
+                  value: isSelected,
+                  onChanged: (bool? value) {
+                    setState(() {
+                      _selectedExtras[extraId] = value ?? false;
+                    });
+                  },
+                  title: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          extraName,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[800],
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.purple[100],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '+${extraPrice.toStringAsFixed(2)} DT',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.purple[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  checkColor: Colors.white,
+                  activeColor: Colors.purple[600],
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _submitReview() async {
@@ -537,6 +814,10 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
                     if (_companyInfo != null) const SizedBox(height: 16),
                     _buildDescription(),
                     const SizedBox(height: 16),
+                    _buildToppingsSection(),
+                    if ((_product!['toppings'] as List? ?? []).isNotEmpty) const SizedBox(height: 16),
+                    _buildExtrasSection(),
+                    if ((_product!['extras'] as List? ?? []).isNotEmpty) const SizedBox(height: 16),
                     _buildReviews(),
                     const SizedBox(height: 100),
                   ],
@@ -549,6 +830,8 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
       bottomNavigationBar: _buildBottomBar(),
     );
   }
+
+
 
   Widget _buildAppBar() {
     return SliverAppBar(
@@ -1794,8 +2077,9 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
     );
   }
 
-  Widget _buildBottomBar() {
+    Widget _buildBottomBar() {
     bool isAvailable = _product!['available'] == true || _product!['available'] == 1;
+    final totalPrice = _calculateTotalPrice();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -1915,7 +2199,7 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
                           Flexible(
                             child: Text(
                               isAvailable
-                                  ? 'Ajouter • ${((_product!['productFinalePrice'] ?? _product!['productPrice'] ?? 0) * _quantity).toStringAsFixed(2)} DT'
+                                  ? 'Ajouter • ${totalPrice.toStringAsFixed(2)} DT'
                                   : 'Produit épuisé',
                               style: const TextStyle(
                                 fontSize: 16,
@@ -1938,7 +2222,6 @@ class _ProductDetailPageState extends State<ProductDetailPage> with SingleTicker
       ),
     );
   }
-
   // ============================================================================
   // SKELETON UI METHODS
   // ============================================================================

@@ -9,7 +9,7 @@ import '../../../../core/services/product_service.dart';
 import '../../../../core/services/attachment_service.dart';
 import '../widgets/owner_company_info_card.dart';
 import '../widgets/owner_company_stats_card.dart';
-import 'add_product_page.dart';
+import 'owner_add_product_page.dart';
 import 'owner_add_company_page.dart';
 import 'owner_details_product_page.dart';
 import 'owner_edit_company_page.dart';

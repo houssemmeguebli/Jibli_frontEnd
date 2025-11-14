@@ -104,18 +104,11 @@ class _ProfilePageState extends State<ProfilePage> {
           headerSliverBuilder: (context, innerBoxIsScrolled) {
             return [
               SliverAppBar(
-                title: Text(
-                  'Mon Profil',
-                  style: TextStyle(
-                    color: AppColors.textLight,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
                 backgroundColor: AppColors.primary,
                 pinned: true,
                 floating: true,
                 elevation: 0,
-                expandedHeight: 200,
+                expandedHeight: 150,
                 flexibleSpace: FlexibleSpaceBar(
                   background: Container(
                     decoration: const BoxDecoration(
@@ -143,8 +136,6 @@ class _ProfilePageState extends State<ProfilePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildStatsSection(),
-                const SizedBox(height: 24),
                 _buildMenuSection(context),
               ],
             ),
@@ -249,94 +240,6 @@ class _ProfilePageState extends State<ProfilePage> {
               Icons.edit_rounded,
               color: AppColors.textLight,
             ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStatsSection() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.shadow,
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _buildStatItem(
-              icon: Icons.shopping_bag_outlined,
-              value: '24',
-              label: 'Commandes',
-              color: AppColors.primary,
-            ),
-          ),
-          Container(
-            width: 1,
-            height: 40,
-            color: AppColors.divider,
-          ),
-          Expanded(
-            child: _buildStatItem(
-              icon: Icons.favorite_outline,
-              value: '8',
-              label: 'Favoris',
-              color: AppColors.danger,
-            ),
-          ),
-          Container(
-            width: 1,
-            height: 40,
-            color: AppColors.divider,
-          ),
-          Expanded(
-            child: _buildStatItem(
-              icon: Icons.star_outline,
-              value: '4.8',
-              label: 'Note',
-              color: AppColors.warning,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatItem({
-    required IconData icon,
-    required String value,
-    required String label,
-    required Color color,
-  }) {
-    return Column(
-      children: [
-        Icon(
-          icon,
-          color: color,
-          size: 24,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: AppColors.textSecondary,
           ),
         ),
       ],
